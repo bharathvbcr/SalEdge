@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#D32F2F" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Battery Shop" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Battery Shop Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'brand-red': '#D32F2F',
+              
+              // Theme-aware colors using CSS variables
+              'bg-primary': 'var(--bg-primary)',
+              'bg-secondary': 'var(--bg-secondary)',
+              'bg-tertiary': 'var(--bg-tertiary)',
+              'text-primary': 'var(--text-primary)',
+              'text-secondary': 'var(--text-secondary)',
+              'text-muted': 'var(--text-muted)',
+              'border-color': 'var(--border-color)',
+              'glass-bg': 'var(--glass-bg)',
+              'glass-border': 'var(--glass-border)',
+
+              'status-green-bg': 'var(--status-green-bg)',
+              'status-green-text': 'var(--status-green-text)',
+              'status-red-bg': 'var(--status-red-bg)',
+              'status-red-text': 'var(--status-red-text)',
+              'status-yellow-bg': 'var(--status-yellow-bg)',
+              'status-yellow-text': 'var(--status-yellow-text)',
+              'status-blue-bg': 'var(--status-blue-bg)',
+              'status-blue-text': 'var(--status-blue-text)',
+              'status-purple-bg': 'var(--status-purple-bg)',
+              'status-purple-text': 'var(--status-purple-text)',
+            },
+          }
+        }
+      }
+    </script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+      
+      :root {
+        --brand-red: #D32F2F;
+        --focus-ring-color: rgba(211, 47, 47, 0.2);
+        
+        /* Light Theme */
+        --bg-primary: rgb(248 250 252); /* slate-50 */
+        --bg-secondary: rgb(255 255 255); /* white */
+        --bg-tertiary: rgb(241 245 249); /* slate-100 */
+        --text-primary: rgb(15 23 42); /* slate-900 */
+        --text-secondary: rgb(51 65 85); /* slate-700 */
+        --text-muted: rgb(100 116 139); /* slate-500 */
+        --border-color: rgba(0, 0, 0, 0.08);
+        --glass-bg: rgba(255, 255, 255, 0.6);
+        --glass-border: rgba(255, 255, 255, 0.3);
+
+        --status-green-bg: #dcfce7; --status-green-text: #166534;
+        --status-red-bg: #fee2e2; --status-red-text: #991b1b;
+        --status-yellow-bg: #fef9c3; --status-yellow-text: #854d0e;
+        --status-blue-bg: #dbeafe; --status-blue-text: #1e40af;
+        --status-purple-bg: #f3e8ff; --status-purple-text: #6b21a8;
+      }
+
+      body.dark {
+        /* Dark Theme - High Contrast */
+        --bg-primary: rgb(2 6 23); /* slate-950 */
+        --bg-secondary: rgb(15 23 42); /* slate-900 */
+        --bg-tertiary: rgb(30 41 59); /* slate-800 */
+        --text-primary: rgb(248 250 252); /* slate-50 */
+        --text-secondary: rgb(203 213 225); /* slate-300 */
+        --text-muted: rgb(148 163 184); /* slate-400 */
+        --border-color: rgb(51 65 85); /* slate-700 */
+        --glass-bg: rgba(15, 23, 42, 0.6);
+        --glass-border: rgba(255, 255, 255, 0.15);
+
+        --status-green-bg: #14532d; --status-green-text: #dcfce7;
+        --status-red-bg: #7f1d1d; --status-red-text: #fee2e2;
+        --status-yellow-bg: #713f12; --status-yellow-text: #fef9c3;
+        --status-blue-bg: #1e3a8a; --status-blue-text: #dbeafe;
+        --status-purple-bg: #581c87; --status-purple-text: #e9d5ff;
+      }
+      
+      body {
+        font-family: 'Inter', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        background-color: var(--bg-primary);
+        color: var(--text-secondary);
+        transition: background-color 0.3s ease, color 0.3s ease;
+      }
+    </style>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-bg-primary">
+    <div id="root"></div>
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://aistudiocdn.com/react@^19.2.0",
+        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+        "react/": "https://aistudiocdn.com/react@^19.2.0/",
+        "recharts": "https://aistudiocdn.com/recharts@^2.12.7",
+        "jspdf": "https://aistudiocdn.com/jspdf@^2.5.1",
+        "html2canvas": "https://aistudiocdn.com/html2canvas@^1.4.1"
+      }
+    }
+    </script>
+    <script type="module" src="/index.tsx"></script>
+</body>
+</html>

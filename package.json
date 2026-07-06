@@ -1,0 +1,61 @@
+{
+  "name": "battery-shop-management-system",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:full": "concurrently -n semantic,dev -c magenta,green \"npm run semantic:serve\" \"npm run dev\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "semantic:setup": "node scripts/semantic-setup.mjs",
+    "semantic:serve": "node scripts/semantic-serve.mjs",
+    "semantic:benchmark": "node scripts/semantic-benchmark.mjs",
+    "build": "vite build",
+    "build:test": "VITE_ENABLE_TEST_LOGIN=true vite build",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --packages=external --format=esm --outfile=dist-server/index.mjs",
+    "build:desktop": "npm run build && npm run build:server",
+    "typecheck": "tsc --noEmit",
+    "start": "tsx server/index.ts",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@types/jsbarcode": "^3.11.4",
+    "bcryptjs": "^3.0.2",
+    "better-sqlite3": "^12.11.1",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "html2canvas": "^1.4.1",
+    "html5-qrcode": "^2.3.8",
+    "jsbarcode": "^3.12.3",
+    "jsonwebtoken": "^9.0.2",
+    "jspdf": "^2.5.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.1.2",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.19.3",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-darwin-arm64": "^4.62.2"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "Battery Shop Management",
+  "short_name": "Battery Shop",
+  "description": "Mobile companion for barcode scanning, inventory, and price checks",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#D32F2F",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
