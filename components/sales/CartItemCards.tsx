@@ -7,10 +7,11 @@ export const CartItemCard: React.FC<{
     onUpdate: (itemId: string, field: string, value: unknown) => void;
     onRemove: (itemId: string) => void;
     currencySymbol: string;
+    gstRate: number;
     readOnly: boolean;
     showValidation: boolean;
     isReturnMode: boolean;
-}> = ({ item, onUpdate, onRemove, currencySymbol, readOnly, showValidation, isReturnMode }) => {
+}> = ({ item, onUpdate, onRemove, currencySymbol, gstRate, readOnly, showValidation, isReturnMode }) => {
     const serialsEntered = useMemo(() => item.serialNumbers.filter(s => s.trim() !== '').length, [item.serialNumbers]);
     const hasSerialError = showValidation && !item.isCustom && item.serialNumbers.some(s => !s.trim());
 
@@ -24,8 +25,7 @@ export const CartItemCard: React.FC<{
         onUpdate(item.itemId, `specifications.${field}`, value);
     };
 
-    const profit = useMemo(() => {
-        if (item.isBuyback || item.isCustom || item.purchasePrice === undefined) return null;
+    const lineNet = useMemo(() => {
         const totalSell = item.price * item.quantity;
         let totalDiscount = 0;
         if (item.discount.type === 'percentage') {
@@ -33,9 +33,15 @@ export const CartItemCard: React.FC<{
         } else {
             totalDiscount = item.discount.value * item.quantity;
         }
-        const totalCost = item.purchasePrice * item.quantity;
-        return totalSell - totalDiscount - totalCost;
+        return totalSell - totalDiscount;
     }, [item]);
+
+    const profit = useMemo(() => {
+        if (item.isBuyback || item.isCustom || item.purchasePrice === undefined) return null;
+        const exTaxRevenue = gstRate > 0 ? lineNet / (1 + gstRate / 100) : lineNet;
+        const totalCost = item.purchasePrice * item.quantity;
+        return exTaxRevenue - totalCost;
+    }, [item, lineNet, gstRate]);
 
     return (
         <div className={`p-4 rounded-lg border bg-bg-primary/50 ${hasSerialError ? 'border-status-red-text bg-status-red-bg/10' : 'border-border-color'}`}>
@@ -92,7 +98,7 @@ export const CartItemCard: React.FC<{
                     />
                 </div>
                 <div className="flex flex-col">
-                    <label className="text-xs font-semibold text-text-muted mb-1">Price</label>
+                    <label className="text-xs font-semibold text-text-muted mb-1">Final Price (Incl. GST)</label>
                     <input disabled={readOnly || isReturnMode} type="number" value={Math.abs(item.price)} min="0" onChange={e => onUpdate(item.itemId, 'price', parseFloat(e.target.value) || 0)} className="form-input text-right" />
                 </div>
                 <div className="flex flex-col">
@@ -111,7 +117,7 @@ export const CartItemCard: React.FC<{
                 </div>
                 <div className="flex flex-col items-end justify-center">
                     <label className="text-xs font-semibold text-text-muted mb-1">Total</label>
-                    <p className={`font-bold text-lg ${isReturnMode ? 'text-negative' : 'text-text-primary'}`}>{currencySymbol}{(item.quantity * item.price).toFixed(2)}</p>
+                    <p className={`font-bold text-lg ${isReturnMode ? 'text-negative' : 'text-text-primary'}`}>{currencySymbol}{lineNet.toFixed(2)}</p>
                     {!isReturnMode && profit !== null && (
                         <div className={`text-xs font-bold mt-1 px-1.5 py-0.5 rounded badge ${profit >= 0 ? 'badge-green' : 'badge-red'}`}>
                             Profit: {currencySymbol}{profit.toFixed(2)}

@@ -139,16 +139,19 @@ export function computeHsnSummary(
                     ? (item.discount.type === 'percentage' ? itemGross * (item.discount.value / 100) : item.discount.value * item.quantity)
                     : 0;
                 const itemNet = itemGross - itemDiscount;
-                const cgst = item.cgstAmount ?? (t.isInterstate ? 0 : itemNet * (gstRate / 200));
-                const sgst = item.sgstAmount ?? (t.isInterstate ? 0 : itemNet * (gstRate / 200));
-                const igst = item.igstAmount ?? (t.isInterstate ? itemNet * (gstRate / 100) : 0);
+                const taxableNet = t.priceIncludesTax
+                    ? itemNet / (1 + gstRate / 100)
+                    : itemNet;
+                const cgst = item.cgstAmount ?? (t.isInterstate ? 0 : taxableNet * (gstRate / 200));
+                const sgst = item.sgstAmount ?? (t.isInterstate ? 0 : taxableNet * (gstRate / 200));
+                const igst = item.igstAmount ?? (t.isInterstate ? taxableNet * (gstRate / 100) : 0);
 
                 hsnMap[hsn].qty += item.quantity;
-                hsnMap[hsn].taxableValue += itemNet;
+                hsnMap[hsn].taxableValue += taxableNet;
                 hsnMap[hsn].cgst += cgst;
                 hsnMap[hsn].sgst += sgst;
                 hsnMap[hsn].igst += igst;
-                hsnMap[hsn].totalValue += itemNet + cgst + sgst + igst;
+                hsnMap[hsn].totalValue += t.priceIncludesTax ? itemNet : itemNet + cgst + sgst + igst;
             });
         });
 

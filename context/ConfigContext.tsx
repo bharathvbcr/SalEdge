@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useCallback, ReactNode } from 'react';
 import useApiStorage from '../hooks/useApiStorage.tsx';
 import { AppConfig, Firm, AppPreferences } from '../types.ts';
 import { DEFAULT_SALE_CATEGORIES } from '../constants.ts';
@@ -65,7 +65,8 @@ export const INITIAL_CONFIG: AppConfig = {
             provider: 'gemini',
             geminiModel: 'gemini-2.0-flash',
             ollamaBaseUrl: 'http://127.0.0.1:11434',
-            ollamaVisionModel: 'llama3.2-vision',
+            ollamaVisionModel: 'auto',
+            ollamaTextModel: 'auto',
         },
     },
 };
@@ -115,60 +116,72 @@ export const ConfigProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         }));
     }, [configLoading, config.firms.length, setConfig]);
 
-    const sourceFirms = config.firms.length > 0 ? config.firms : INITIAL_CONFIG.firms;
-
-    // Merge with defaults in case of new fields added to existing structure (Schema Migration strategy)
-    const effectiveConfig: AppConfig = {
-        ...config,
-        firms: sourceFirms.map(mergeFirmWithDefaults),
-        preferences: {
-            ...INITIAL_CONFIG.preferences,
-            ...config.preferences,
-            loyaltyProgram: {
-                ...INITIAL_CONFIG.preferences.loyaltyProgram,
-                ...(config.preferences?.loyaltyProgram || {}),
-                tiers: {
-                    ...INITIAL_CONFIG.preferences.loyaltyProgram.tiers,
-                    ...(config.preferences?.loyaltyProgram?.tiers || {})
+    // Merge with defaults in case of new fields added to existing structure (Schema Migration strategy).
+    // Memoized so parent re-renders (e.g. auth activity ticks) do not recreate preferences and
+    // wipe unsaved Settings form state.
+    const effectiveConfig: AppConfig = useMemo(() => {
+        const sourceFirms = config.firms.length > 0 ? config.firms : INITIAL_CONFIG.firms;
+        return {
+            ...config,
+            firms: sourceFirms.map(mergeFirmWithDefaults),
+            preferences: {
+                ...INITIAL_CONFIG.preferences,
+                ...config.preferences,
+                loyaltyProgram: {
+                    ...INITIAL_CONFIG.preferences.loyaltyProgram,
+                    ...(config.preferences?.loyaltyProgram || {}),
+                    tiers: {
+                        ...INITIAL_CONFIG.preferences.loyaltyProgram.tiers,
+                        ...(config.preferences?.loyaltyProgram?.tiers || {}),
+                    },
+                    tierDiscounts: {
+                        ...INITIAL_CONFIG.preferences.loyaltyProgram.tierDiscounts,
+                        ...(config.preferences?.loyaltyProgram?.tierDiscounts || {}),
+                    },
                 },
-                tierDiscounts: {
-                    ...INITIAL_CONFIG.preferences.loyaltyProgram.tierDiscounts,
-                    ...(config.preferences?.loyaltyProgram?.tierDiscounts || {})
-                }
+                saleCategories: config.preferences?.saleCategories?.length
+                    ? config.preferences.saleCategories
+                    : DEFAULT_SALE_CATEGORIES,
+                aiSettings: {
+                    ...INITIAL_CONFIG.preferences.aiSettings!,
+                    ...(config.preferences?.aiSettings || {}),
+                },
             },
-            saleCategories: config.preferences?.saleCategories?.length
-                ? config.preferences.saleCategories
-                : DEFAULT_SALE_CATEGORIES,
-            aiSettings: {
-                ...INITIAL_CONFIG.preferences.aiSettings!,
-                ...(config.preferences?.aiSettings || {}),
-            },
-        }
-    };
+        };
+    }, [config]);
 
-    const updateFirm = (updatedFirm: Firm) => {
+    const updateFirm = useCallback((updatedFirm: Firm) => {
         setConfig(prev => ({
             ...prev,
-            firms: prev.firms.map(f => f.id === updatedFirm.id ? updatedFirm : f)
+            firms: prev.firms.map(f => f.id === updatedFirm.id ? updatedFirm : f),
         }));
-    };
-    
-    const updatePreferences = (updatedPreferences: Partial<AppPreferences>) => {
+    }, [setConfig]);
+
+    const updatePreferences = useCallback((updatedPreferences: Partial<AppPreferences>) => {
         setConfig(prev => ({
             ...prev,
-            preferences: { ...prev.preferences, ...updatedPreferences }
+            preferences: { ...prev.preferences, ...updatedPreferences },
         }));
-    };
-    
-    const resetConfig = () => {
+    }, [setConfig]);
+
+    const resetConfig = useCallback(() => {
         setConfig(INITIAL_CONFIG);
-    };
+    }, [setConfig]);
 
     const defaultFirm = effectiveConfig.firms.find(f => f.id === effectiveConfig.preferences.defaultFirmId)
         ?? effectiveConfig.firms[0];
 
+    const contextValue = useMemo(() => ({
+        isLoading: configLoading,
+        config: effectiveConfig,
+        updateFirm,
+        updatePreferences,
+        defaultFirm,
+        resetConfig,
+    }), [configLoading, effectiveConfig, updateFirm, updatePreferences, defaultFirm, resetConfig]);
+
     return (
-        <ConfigContext.Provider value={{ isLoading: configLoading, config: effectiveConfig, updateFirm, updatePreferences, defaultFirm, resetConfig }}>
+        <ConfigContext.Provider value={contextValue}>
             {children}
         </ConfigContext.Provider>
     );

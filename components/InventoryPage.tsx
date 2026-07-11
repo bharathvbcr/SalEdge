@@ -19,91 +19,12 @@ import { Modal, ModalHeader, ModalFooter } from './Modal.tsx';
 import { FormField } from './FormField.tsx';
 import { useToast } from '../context/ToastContext.tsx';
 import { isSerialTrackedItem } from '../utils/serialNumbers.ts';
+import { sharedInventoryFirmId } from '../utils/sharedInventory.ts';
 import { consumeInventorySearchRequest } from '../utils/pageActions.ts';
 import { usePageIntent } from '../hooks/usePageIntent.ts';
 import { useBarcodeWedge } from '../hooks/useBarcodeWedge.ts';
 
-// --- Transfer Modal Component ---
-const TransferStockModal: React.FC<{
-    item: InventoryItem;
-    productName: string;
-    onClose: () => void;
-}> = ({ item, productName, onClose }) => {
-    const { config } = useConfig();
-    const { transferStock } = useAppData();
-    const { addToast } = useToast();
-    const serialTracked = isSerialTrackedItem(item);
-    const [targetFirmId, setTargetFirmId] = useState(config.firms.find(f => f.id !== item.firmId)?.id || '');
-    const [quantity, setQuantity] = useState(1);
-
-    const handleTransfer = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!targetFirmId) {
-            addToast('Please select a target firm.', 'warning');
-            return;
-        }
-        transferStock(item.id, targetFirmId, quantity);
-        onClose();
-    };
-
-    const sourceFirmName = config.firms.find(f => f.id === item.firmId)?.shopDetails.name || 'Unknown';
-
-    return (
-        <Modal onClose={onClose} size="sm" ariaLabel="Transfer Stock">
-            <ModalHeader title="Transfer Stock" onClose={onClose} />
-                <form onSubmit={handleTransfer} className="p-6 space-y-4">
-                    <div className="bg-status-blue-bg/50 p-3 rounded-lg text-sm border border-status-blue-text/20">
-                        <p className="font-semibold text-text-primary">{productName}</p>
-                        {item.serialNumber && (
-                            <p className="font-mono text-xs text-text-muted mt-1">Serial: {item.serialNumber}</p>
-                        )}
-                        <p className="text-text-muted mt-1">Source: <span className="font-bold">{sourceFirmName}</span></p>
-                        <p className="text-text-muted">Available: <span className="font-bold">{item.stock}</span></p>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-text-secondary mb-1">Transfer To</label>
-                        <select 
-                            value={targetFirmId} 
-                            onChange={e => setTargetFirmId(e.target.value)} 
-                            className="form-input"
-                            required
-                        >
-                            {config.firms.filter(f => f.id !== item.firmId).map(f => (
-                                <option key={f.id} value={f.id}>{f.shopDetails.name}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-text-secondary mb-1">Quantity</label>
-                        {serialTracked ? (
-                            <p className="text-sm text-text-muted">Serial-tracked batteries transfer one unit at a time.</p>
-                        ) : (
-                            <input 
-                                type="number" 
-                                min="1" 
-                                max={item.stock} 
-                                value={quantity} 
-                                onChange={e => setQuantity(parseInt(e.target.value))} 
-                                className="form-input"
-                                required
-                            />
-                        )}
-                    </div>
-
-                    <ModalFooter>
-                        <div className="flex gap-3 ml-auto">
-                            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-                            <button type="submit" className="btn-primary">Transfer</button>
-                        </div>
-                    </ModalFooter>
-                </form>
-        </Modal>
-    );
-};
-
-
+// --- Product Form Modal Component ---
 const ProductFormModal: React.FC<{
     product?: ProductType | null;
     onSave: (data: Omit<ProductType, 'id'> | ProductType) => void;
@@ -251,7 +172,8 @@ export const InventoryPage: React.FC = () => {
     const { config } = useConfig();
     const { userRole } = useAuth();
     
-    const [selectedFirmId, setSelectedFirmId] = useState<string>(config.preferences.defaultFirmId || config.firms[0]?.id || '');
+    const defaultFirm = config.firms.find(f => f.id === config.preferences.defaultFirmId) || config.firms[0];
+    const currencySymbol = defaultFirm?.financials.currencySymbol || '₹';
     const [isManageStockModalOpen, setManageStockModalOpen] = useState(false);
     const [isProductFormOpen, setProductFormOpen] = useState(false);
     const [productToEdit, setProductToEdit] = useState<ProductType | null>(null);
@@ -264,7 +186,6 @@ export const InventoryPage: React.FC = () => {
     const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'name', direction: 'asc' });
     const [itemToAdjust, setItemToAdjust] = useState<InventoryItem | null>(null);
     const [itemForHistory, setItemForHistory] = useState<InventoryItem | null>(null);
-    const [itemToTransfer, setItemToTransfer] = useState<InventoryItem | null>(null);
     const [itemToPrintBarcode, setItemToPrintBarcode] = useState<InventoryItem | null>(null);
     const [isStockTakeOpen, setStockTakeOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<'stock' | 'scrap' | 'suppliers'>('stock');
@@ -285,18 +206,15 @@ export const InventoryPage: React.FC = () => {
         addToast(`Looking up: ${code}`, 'info');
     });
 
-    // Filter Inventory by Firm
-    const firmInventory = useMemo(() => {
-        return inventory.filter(item => item.firmId === selectedFirmId);
-    }, [inventory, selectedFirmId]);
+    const stockInventory = useMemo(() => inventory, [inventory]);
 
      const { totalCostValue, totalMrpValue, lowStockCount } = useMemo(() => {
-        const cost = firmInventory.reduce((sum, item) => sum + item.purchasePrice * item.stock, 0);
-        const mrp = firmInventory.reduce((sum, item) => sum + (item.mrp * item.stock), 0);
+        const cost = stockInventory.reduce((sum, item) => sum + item.purchasePrice * item.stock, 0);
+        const mrp = stockInventory.reduce((sum, item) => sum + (item.mrp * item.stock), 0);
         
         const lowStockProducts = productTypes.filter(pt => {
             if (!pt.lowStockThreshold || pt.lowStockThreshold <= 0) return false;
-            const totalStock = firmInventory
+            const totalStock = stockInventory
                 .filter(inv => inv.productTypeId === pt.id)
                 .reduce((sum, item) => sum + item.stock, 0);
             return totalStock <= pt.lowStockThreshold;
@@ -307,12 +225,12 @@ export const InventoryPage: React.FC = () => {
             totalMrpValue: mrp,
             lowStockCount: lowStockProducts.length
         };
-    }, [firmInventory, productTypes]);
+    }, [stockInventory, productTypes]);
 
     const filteredAndSortedProducts = useMemo(() => {
         // ... (sorting logic same as before)
         let products = productTypes.map(pt => {
-            let relevantInventory = firmInventory.filter(inv => inv.productTypeId === pt.id);
+            let relevantInventory = stockInventory.filter(inv => inv.productTypeId === pt.id);
 
             if (searchQuery) {
                 const lowerQuery = searchQuery.toLowerCase();
@@ -374,16 +292,15 @@ export const InventoryPage: React.FC = () => {
         });
 
         return products;
-    }, [productTypes, firmInventory, searchQuery, sortConfig, lowStockOnly]);
-    
-    const activeFirm = config.firms.find(f => f.id === selectedFirmId);
+    }, [productTypes, stockInventory, searchQuery, sortConfig, lowStockOnly]);
+
 
     const getPriceRange = (items: InventoryItem[], key: 'purchasePrice' | 'mrp') => {
         if (items.length === 0) return 'N/A';
         const prices = items.map(item => item[key]);
         const min = Math.min(...prices);
         const max = Math.max(...prices);
-        const currency = activeFirm?.financials.currencySymbol || '₹';
+        const currency = currencySymbol;
 
         if (min === max) return `${currency}${min.toLocaleString('en-IN')}`;
         return `${currency}${min.toLocaleString('en-IN')} - ${currency}${max.toLocaleString('en-IN')}`;
@@ -457,12 +374,7 @@ export const InventoryPage: React.FC = () => {
 
     return (
         <div className="page-shell">
-            <PageHeader title="Products & Inventory" subtitle="Stock levels, transfers, and product catalog">
-                     <div className="firm-switcher">
-                           {config.firms.map(firm => (
-                               <button key={firm.id} onClick={() => setSelectedFirmId(firm.id)} className={`firm-switcher-btn ${selectedFirmId === firm.id ? 'active' : ''}`}>{firm.shopDetails.name}</button>
-                           ))}
-                    </div>
+            <PageHeader title="Products & Inventory" subtitle="One stock pool for the whole shop">
                     {activeTab !== 'suppliers' && (
                         <>
                             <SearchInput
@@ -490,9 +402,9 @@ export const InventoryPage: React.FC = () => {
             {activeTab !== 'suppliers' && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {userRole === 'admin' && (
-                        <InventoryStatCard title="Total Inventory Value (Cost)" value={`${activeFirm?.financials.currencySymbol || '₹'}${totalCostValue.toLocaleString('en-IN')}`} icon={<IconBox />} />
+                        <InventoryStatCard title="Total Inventory Value (Cost)" value={`${currencySymbol}${totalCostValue.toLocaleString('en-IN')}`} icon={<IconBox />} />
                     )}
-                    <InventoryStatCard title="Total Inventory Value (MRP)" value={`${activeFirm?.financials.currencySymbol || '₹'}${totalMrpValue.toLocaleString('en-IN')}`} icon={<IconTrendingUp />} />
+                    <InventoryStatCard title="Total Inventory Value (MRP)" value={`${currencySymbol}${totalMrpValue.toLocaleString('en-IN')}`} icon={<IconTrendingUp />} />
                     <InventoryStatCard
                         title="Low Stock Items"
                         value={lowStockCount.toString()}
@@ -583,7 +495,7 @@ export const InventoryPage: React.FC = () => {
                                                             <div>
                                                                 <h4 className="font-bold text-lg text-text-primary flex items-center gap-2">
                                                                     <IconBox className="h-5 w-5 text-text-muted"/>
-                                                                    Batch Inventory ({activeFirm?.shopDetails.name})
+                                                                    Batch Inventory
                                                                 </h4>
                                                                 <p className="text-sm text-text-muted mt-1">
                                                                     In stock: <span className="font-medium text-text-secondary">{p.inventoryItems.filter(i => i.stock > 0).length}</span>
@@ -644,11 +556,11 @@ export const InventoryPage: React.FC = () => {
                                                                                 </td>
                                                                                 {userRole === 'admin' && (
                                                                                     <td className="p-4 text-right font-mono text-text-secondary text-xs">
-                                                                                        {activeFirm?.financials.currencySymbol || '₹'}{item.purchasePrice.toLocaleString('en-IN')}
+                                                                                        {currencySymbol}{item.purchasePrice.toLocaleString('en-IN')}
                                                                                     </td>
                                                                                 )}
                                                                                 <td className="p-4 text-right font-mono font-medium text-text-primary">
-                                                                                    {activeFirm?.financials.currencySymbol || '₹'}{item.mrp.toLocaleString('en-IN')}
+                                                                                    {currencySymbol}{item.mrp.toLocaleString('en-IN')}
                                                                                 </td>
                                                                                 <td className="p-4 text-center">
                                                                                      <span className={`inline-flex items-center justify-center px-2.5 py-1 rounded-md text-sm font-bold ${item.stock > 0 ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -657,9 +569,6 @@ export const InventoryPage: React.FC = () => {
                                                                                 </td>
                                                                                 <td className="p-4">
                                                                                     <div className="flex justify-center items-center gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                                                                                         <button onClick={(e) => {e.stopPropagation(); setItemToTransfer(item)}} title="Transfer Stock" className="btn-link text-xs" aria-label="Transfer stock">
-                                                                                             Transfer
-                                                                                         </button>
                                                                                          <button onClick={(e) => {e.stopPropagation(); setItemToPrintBarcode(item)}} title="Print Barcodes" className="btn-icon" aria-label="Print barcodes">
                                                                                              <IconPrint className="h-4 w-4"/>
                                                                                          </button>
@@ -675,7 +584,7 @@ export const InventoryPage: React.FC = () => {
                                                         ) : (
                                                             <div className="text-center py-8 bg-bg-secondary rounded-lg border border-border-color border-dashed">
                                                                 <IconBox className="h-10 w-10 text-text-muted mx-auto mb-2 opacity-50" />
-                                                                <p className="text-text-muted font-medium">No stock available in {activeFirm?.shopDetails.name}.</p>
+                                                                <p className="text-text-muted font-medium">No stock available for this product.</p>
                                                                 <button onClick={(e) => { e.stopPropagation(); handleOpenManageStock(p); }} className="mt-4 text-blue-600 hover:text-blue-800 text-sm font-bold">
                                                                     + Add Initial Stock
                                                                 </button>
@@ -717,7 +626,7 @@ export const InventoryPage: React.FC = () => {
                                         <td className="p-3">{new Date(item.date).toLocaleDateString()}</td>
                                         <td className="p-3 font-medium text-text-primary">{item.productName}</td>
                                         <td className="p-3">{item.category}</td>
-                                        {userRole === 'admin' && <td className="p-3 text-right font-mono">{activeFirm?.financials.currencySymbol || '₹'}{item.purchasePrice}</td>}
+                                        {userRole === 'admin' && <td className="p-3 text-right font-mono">{currencySymbol}{item.purchasePrice}</td>}
                                         <td className="p-3 text-center">
                                             <span className={`px-2 py-1 text-xs font-bold rounded-full ${item.status === 'In Stock' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
                                                 {item.status}
@@ -745,9 +654,9 @@ export const InventoryPage: React.FC = () => {
             {isManageStockModalOpen && productForStock && (
                 <AddStockModal
                     productType={productForStock}
-                    existingBatches={inventory.filter(i => i.productTypeId === productForStock.id && i.firmId === selectedFirmId)}
+                    existingBatches={inventory.filter(i => i.productTypeId === productForStock.id)}
                     onClose={() => setManageStockModalOpen(false)}
-                    onAddBatch={(newItem) => addStock({ ...newItem, firmId: selectedFirmId })}
+                    onAddBatch={(newItem) => addStock({ ...newItem, firmId: sharedInventoryFirmId() })}
                     onUpdateBatchDetails={updateBatchDetails}
                     onDeleteBatch={deleteBatch}
                 />
@@ -756,7 +665,6 @@ export const InventoryPage: React.FC = () => {
             
             {itemToAdjust && <StockAdjustmentModal item={itemToAdjust} productType={productTypes.find(p => p.id === itemToAdjust.productTypeId)!} onClose={() => setItemToAdjust(null)} />}
             {itemForHistory && <InventoryHistoryModal item={itemForHistory} productType={productTypes.find(p => p.id === itemForHistory.productTypeId)!} onClose={() => setItemForHistory(null)} />}
-            {itemToTransfer && <TransferStockModal item={itemToTransfer} productName={productTypes.find(p => p.id === itemToTransfer.productTypeId)?.name || 'Unknown'} onClose={() => setItemToTransfer(null)} />}
             {itemToPrintBarcode && (() => {
                 const pt = productTypes.find(p => p.id === itemToPrintBarcode.productTypeId);
                 const fullName = pt ? `${pt.brandName} ${pt.name}` : 'Unknown';
@@ -769,7 +677,7 @@ export const InventoryPage: React.FC = () => {
                     />
                 );
             })()}
-            {isStockTakeOpen && <StockTakeModal firmId={selectedFirmId} onClose={() => setStockTakeOpen(false)} />}
+            {isStockTakeOpen && <StockTakeModal onClose={() => setStockTakeOpen(false)} />}
         </div>
     );
 };

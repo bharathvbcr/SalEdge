@@ -13,6 +13,7 @@ import { SearchInput } from './SearchInput.tsx';
 import { Modal, ModalHeader, ModalFooter } from './Modal.tsx';
 import { useToast } from '../context/ToastContext.tsx';
 import { PurchaseImportModal } from './PurchaseImportModal.tsx';
+import { SharedStockHint } from './SharedStockHint.tsx';
 import { readImageAsDataUrl } from '../utils/imageFile.ts';
 import { consumeOpenPurchaseRequest } from '../utils/mobilePurchaseQueue.ts';
 import { downloadTextFile, exportPurchasesCsv, exportPurchasesJson } from '../utils/purchaseExport.ts';
@@ -250,9 +251,9 @@ const PurchaseFormModal: React.FC<{
         });
     };
 
-    const validatePurchaseItemSerials = (item: PurchaseItem, firmId: string, existingInventory = inventory): string | null => {
+    const validatePurchaseItemSerials = (item: PurchaseItem, _firmId: string, existingInventory = inventory): string | null => {
         if (formData.status !== 'Received') return null;
-        return validateBatterySerials(item.serialNumbers ?? [], item.quantity, existingInventory, firmId);
+        return validateBatterySerials(item.serialNumbers ?? [], item.quantity, existingInventory);
     };
 
     const handleAddItem = () => {
@@ -274,7 +275,7 @@ const PurchaseFormModal: React.FC<{
             serialSlots = filled;
             if (consumed.length > 0) setMobileSerialPool(remaining);
 
-            const serialError = validateBatterySerials(serialSlots, quantity, inventory, formData.firmId);
+            const serialError = validateBatterySerials(serialSlots, quantity, inventory);
             if (serialError) {
                 addToast(serialError, 'warning');
                 return;
@@ -396,6 +397,7 @@ const PurchaseFormModal: React.FC<{
                             <select value={formData.firmId} onChange={e => setFormData({...formData, firmId: e.target.value})} className="form-input">
                                 {config.firms.map(f => <option key={f.id} value={f.id}>{f.shopDetails.name}</option>)}
                             </select>
+                            {config.firms.length > 1 && <SharedStockHint className="mt-1" />}
                         </div>
                         <div className="relative">
                             <label className="block text-xs font-medium text-text-muted mb-1">Supplier</label>

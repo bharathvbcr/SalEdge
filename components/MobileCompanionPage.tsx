@@ -16,13 +16,17 @@ import {
 } from '../utils/mobileSaleQueue.ts';
 import { hapticError, hapticSuccess, playScanBeep, playScanErrorBeep } from '../utils/haptics.ts';
 import { isSerialInInventory, isSerialTrackedItem, findSerialInventoryRecord } from '../utils/serialNumbers.ts';
+import { sharedInventoryFirmId } from '../utils/sharedInventory.ts';
 import { IconPlus, IconMinus, IconAlertTriangle, IconTrash, IconSales, IconSettings, IconUpload } from './icons.tsx';
 import { ConfirmationModal } from './ConfirmationModal.tsx';
 
 import { readMobileInvoiceImage } from '../utils/imageFile.ts';
 import { requestOpenPurchase } from '../utils/mobilePurchaseQueue.ts';
 import { MobileModelPickerSheet } from './mobile/MobileModelPickerSheet.tsx';
+import { MobileConnectPanel } from './MobileConnectPanel.tsx';
+import { SharedStockHint } from './SharedStockHint.tsx';
 import { DEFAULT_SALE_CATEGORIES } from '../constants.ts';
+import { extractGstFromFinal } from '../utils/salePricing.ts';
 
 type MobileMode = 'scan' | 'sale' | 'add' | 'count' | 'inventory' | 'warranty' | 'purchase';
 
@@ -319,20 +323,20 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
     const queuedInventoryIds = useMemo(() => new Set(saleQueue.map(q => q.inventoryItemId)), [saleQueue]);
 
     const searchResults = useMemo(
-        () => searchInventory(searchQuery, inventory, productTypes, firmId),
-        [searchQuery, inventory, productTypes, firmId]
+        () => searchInventory(searchQuery, inventory, productTypes),
+        [searchQuery, inventory, productTypes]
     );
 
     const lowStockProducts = useMemo(() => {
         return productTypes
             .filter(pt => pt.lowStockThreshold && pt.lowStockThreshold > 0)
             .map(pt => {
-                const stock = inventory.filter(i => i.firmId === firmId && i.productTypeId === pt.id).reduce((s, i) => s + i.stock, 0);
+                const stock = inventory.filter(i => i.productTypeId === pt.id).reduce((s, i) => s + i.stock, 0);
                 return { product: pt, stock, threshold: pt.lowStockThreshold! };
             })
             .filter(x => x.stock <= x.threshold)
             .sort((a, b) => a.stock - b.stock);
-    }, [productTypes, inventory, firmId]);
+    }, [productTypes, inventory]);
 
     const countRows = useMemo(() => {
         return Object.entries(countMap).map(([id, counted]) => {
@@ -353,14 +357,14 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
     useEffect(() => {
         if (!addProductId) return;
         const batches = inventory
-            .filter(i => i.firmId === firmId && i.productTypeId === addProductId)
+            .filter(i => i.productTypeId === addProductId)
             .sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
         const last = batches[0];
         if (last) {
             setAddMrp(last.mrp.toString());
             setAddCost(last.purchasePrice.toString());
         }
-    }, [addProductId, firmId, inventory]);
+    }, [addProductId, inventory]);
 
     useEffect(() => {
         const on = () => setIsOnline(true);
@@ -394,14 +398,14 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
     }, []);
 
     const describeSerialStockConflict = useCallback((serial: string, activeProductId?: string): string | null => {
-        const existing = findSerialInventoryRecord(serial, inventory, firmId);
+        const existing = findSerialInventoryRecord(serial, inventory);
         if (!existing || existing.stock <= 0) return null;
         const modelName = getProductName(productTypes.find(p => p.id === existing.productTypeId));
         if (activeProductId && existing.productTypeId !== activeProductId) {
             return `Serial "${serial}" is already in stock as ${modelName}.`;
         }
         return `Serial "${serial}" is already in stock${modelName ? ` (${modelName})` : ''}.`;
-    }, [inventory, firmId, productTypes]);
+    }, [inventory, productTypes]);
 
     const describeSoldSerial = useCallback((serial: string): string | null => {
         const wLog = lookupWarrantyBySerial(serial, warrantyLogs);
@@ -476,7 +480,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
             return false;
         }
         const added = addStock({
-            firmId, productTypeId: productId, type: 'New',
+            firmId: sharedInventoryFirmId(), productTypeId: productId, type: 'New',
             serialNumber: serial, batchNumber: batch || undefined,
             purchaseDate: new Date().toISOString().split('T')[0],
             purchasePrice: cost, mrp, stock: 1,
@@ -498,11 +502,11 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
             focusScanInput();
         }
         return true;
-    }, [addProductId, addSerial, addBatch, addMrp, addCost, firmId, addStock, productTypes, addToast, prefs.continuousScan, mode, isOnline, feedbackSuccess, clearScanInput, focusScanInput]);
+    }, [addProductId, addSerial, addBatch, addMrp, addCost, addStock, productTypes, addToast, prefs.continuousScan, mode, isOnline, feedbackSuccess, clearScanInput, focusScanInput]);
 
     const getPricesForProduct = useCallback((productId: string) => {
         const batches = inventory
-            .filter(i => i.firmId === firmId && i.productTypeId === productId)
+            .filter(i => i.productTypeId === productId)
             .sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
         const last = batches[0];
         if (last) {
@@ -516,7 +520,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
             costStr: addCost,
             mrpStr: addMrp,
         };
-    }, [inventory, firmId, addCost, addMrp]);
+    }, [inventory, addCost, addMrp]);
 
     const tryProcessAddSerial = useCallback((serial: string, overrides?: { productId?: string; batch?: string }) => {
         const trimmed = serial.trim();
@@ -598,6 +602,19 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
         assignModelForSerial(created.id);
     }, [addProductType, assignModelForSerial]);
 
+    const computeQuickSaleTotals = useCallback((queue: MobileSaleQueueItem[]) => {
+        let subtotal = 0;
+        for (const q of queue) {
+            const inv = inventory.find(i => i.id === q.inventoryItemId);
+            if (inv && inv.stock > 0) subtotal += inv.mrp;
+        }
+        const taxRegime = activeFirm?.financials.taxRegime ?? 'Composition';
+        const gstRate = activeFirm?.financials.gstRate ?? 0;
+        const total = subtotal;
+        const { taxAmount } = extractGstFromFinal(total, gstRate, taxRegime);
+        return { subtotal, total, taxAmount, taxRegime };
+    }, [inventory, activeFirm]);
+
     const executeQuickSale = useCallback(() => {
         const queue = getSaleQueue();
         if (queue.length === 0) {
@@ -644,8 +661,8 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
         const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
         const taxRegime = activeFirm?.financials.taxRegime ?? 'Composition';
         const gstRate = activeFirm?.financials.gstRate ?? 0;
-        const taxAmount = taxRegime === 'Regular' ? Math.round(subtotal * gstRate) / 100 : 0;
-        const total = subtotal + taxAmount;
+        const total = subtotal;
+        const { taxAmount } = extractGstFromFinal(total, gstRate, taxRegime);
 
         addTransaction({
             firmId,
@@ -659,6 +676,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
             taxRegime,
             taxAmount,
             total,
+            priceIncludesTax: true,
             payments: [{ method: 'Cash', amount: total }],
             status: 'Paid',
             notes: 'Mobile quick sale',
@@ -682,27 +700,19 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
             return;
         }
 
-        let subtotal = 0;
         let inStockCount = 0;
         for (const q of queue) {
             const inv = inventory.find(i => i.id === q.inventoryItemId);
-            if (inv && inv.stock > 0) {
-                subtotal += inv.mrp;
-                inStockCount += 1;
-            }
+            if (inv && inv.stock > 0) inStockCount += 1;
         }
         if (inStockCount === 0) {
             addToast('No queued items are still in stock.', 'error');
             return;
         }
 
-        const taxRegime = activeFirm?.financials.taxRegime ?? 'Composition';
-        const gstRate = activeFirm?.financials.gstRate ?? 0;
-        const taxAmount = taxRegime === 'Regular' ? Math.round(subtotal * gstRate) / 100 : 0;
-        const total = subtotal + taxAmount;
-
+        const { total } = computeQuickSaleTotals(queue);
         setQuickSaleConfirm({ count: inStockCount, total });
-    }, [inventory, activeFirm, addToast, isOnline]);
+    }, [inventory, addToast, isOnline, computeQuickSaleTotals]);
 
     const processCode = useCallback((code: string) => {
         const trimmed = code.trim();
@@ -726,7 +736,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
         }
 
         if (mode === 'purchase') {
-            if (isSerialInInventory(trimmed, inventory, firmId)) {
+            if (isSerialInInventory(trimmed, inventory)) {
                 hapticError();
                 playScanErrorBeep();
                 addToast(`Serial "${trimmed}" is already in stock.`, 'warning');
@@ -747,7 +757,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
             return;
         }
 
-        const result = lookupByBarcode(trimmed, inventory, productTypes, firmId);
+        const result = lookupByBarcode(trimmed, inventory, productTypes);
         setLookupResult(result);
 
         if (result) {
@@ -926,7 +936,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
         setCountConfirm({
             count: adjustments.length,
             onConfirm: () => {
-                performStockTake(firmId, adjustments);
+                performStockTake(adjustments);
                 setCountMap({});
                 addToast('Stock take applied', 'success');
             },
@@ -996,11 +1006,12 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
                             <h1 className="text-lg font-bold text-text-primary">Mobile Companion</h1>
                             <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`} title={isOnline ? 'Online' : 'Offline'} />
                         </div>
-                        <p className="text-xs text-text-muted">{activeFirm?.shopDetails.name}</p>
+                        <p className="text-xs text-text-muted">Bill as: {activeFirm?.shopDetails.name}</p>
+                        {config.firms.length > 1 && <SharedStockHint />}
                     </div>
                     <div className="flex items-center gap-2">
                         {config.firms.length > 1 && (
-                            <select value={firmId} onChange={e => setFirmId(e.target.value)} className="form-input w-auto text-sm py-1.5">
+                            <select value={firmId} onChange={e => setFirmId(e.target.value)} className="form-input w-auto text-sm py-1.5" aria-label="Billing firm">
                                 {config.firms.map(f => <option key={f.id} value={f.id}>{f.shopDetails.name}</option>)}
                             </select>
                         )}
@@ -1064,14 +1075,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
                             </div>
                         ))}
                         <button onClick={handleQuickSale} className="w-full btn-primary py-3">
-                            <IconSales className="h-5 w-5" /> Quick Sale — {currencySymbol}{(() => {
-                                let sub = 0;
-                                for (const q of saleQueue) {
-                                    const inv = inventory.find(i => i.id === q.inventoryItemId);
-                                    if (inv && inv.stock > 0) sub += inv.mrp;
-                                }
-                                return sub.toLocaleString();
-                            })()} ({saleQueue.length})
+                            <IconSales className="h-5 w-5" /> Quick Sale — {currencySymbol}{computeQuickSaleTotals(saleQueue).total.toLocaleString()} ({saleQueue.length})
                         </button>
                         <button onClick={handleCheckout} className="w-full btn-secondary py-2.5 text-sm">
                             Full sale (customer & payment details)
@@ -1328,7 +1332,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
                                 {lowStockProducts.map(({ product, stock, threshold }) => (
                                     <button key={product.id} onClick={() => {
                                         setSearchQuery(getProductName(product));
-                                        setLookupResult(lookupByBarcode(product.id, inventory, productTypes, firmId));
+                                        setLookupResult(lookupByBarcode(product.id, inventory, productTypes));
                                     }} className="w-full text-left bg-status-yellow-bg/50 border border-status-yellow-text/20 rounded-lg p-3 flex justify-between">
                                         <span className="font-medium text-sm">{getProductName(product)}</span>
                                         <span className="text-sm font-bold text-status-yellow-text">{stock}/{threshold}</span>
@@ -1408,38 +1412,15 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
     );
 };
 
-export const MobileCompanionDesktopHint: React.FC = () => {
-    const [copied, setCopied] = useState(false);
-    const url = typeof window !== 'undefined' ? window.location.origin : '';
-
-    const copyUrl = () => {
-        navigator.clipboard.writeText(url).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        });
-    };
-
-    return (
+export const MobileCompanionDesktopHint: React.FC = () => (
         <div className="hidden md:flex flex-col items-center justify-center h-full p-8 text-center">
-            <div className="max-w-lg space-y-5">
+            <div className="max-w-xl w-full space-y-5">
                 <div className="text-6xl">📱</div>
                 <h2 className="text-2xl font-bold text-text-primary">Mobile Companion</h2>
                 <p className="text-text-muted">
-                    Open on your phone for camera scanning, quick sales, stock counts, inventory lookup, and vendor invoice photos.
+                    Scan with your phone for camera scanning, sales checkout, stock counts, inventory lookup, and vendor invoice photos.
                 </p>
-                {url && (
-                    <div className="bg-bg-secondary border border-border-color rounded-xl p-4 space-y-2">
-                        <p className="text-sm text-text-muted">Open this URL on your phone (same Wi‑Fi):</p>
-                        <div className="flex gap-2">
-                            <code className="flex-1 text-left text-sm bg-bg-tertiary rounded-lg px-3 py-2 font-mono truncate">{url}</code>
-                            <button onClick={copyUrl} className="btn-primary btn-sm flex-shrink-0">
-                                {copied ? 'Copied!' : 'Copy'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-                <p className="text-sm text-text-muted">Tip: Add to Home Screen for a native app experience.</p>
+                <MobileConnectPanel />
             </div>
         </div>
     );
-};

@@ -24,6 +24,17 @@ export function isPageAllowed(role: UserRole | null, page: Page): boolean {
     return STAFF_PAGES.includes(page);
 }
 
-export function getDefaultPage(role: UserRole | null): Page {
+export interface DefaultPageOptions {
+    mobile?: boolean;
+    requestedPage?: Page | null;
+}
+
+export function getDefaultPage(role: UserRole | null, options?: DefaultPageOptions): Page {
+    if (options?.requestedPage && isPageAllowed(role, options.requestedPage)) {
+        return options.requestedPage;
+    }
+    if (options?.mobile && isPageAllowed(role, 'Mobile')) {
+        return 'Mobile';
+    }
     return role === 'staff' ? 'Sales' : 'Dashboard';
 }

@@ -119,11 +119,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isSidebarOpen, setSidebarOpen,
       <aside className={`flex-shrink-0 w-64 flex flex-col bg-glass-bg border-r border-glass-border shadow-lg backdrop-blur-lg backdrop-saturate-150 p-4 fixed md:relative h-full z-40 transition-transform duration-300 ease-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
         <div className="flex items-center justify-between pb-4 border-b border-border-color">
           <div className="flex items-center space-x-2">
-            <div className="p-2 bg-brand-red rounded-lg shadow-sm shadow-brand-red/30">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 01-2-2V4z" />
-                <path fillRule="evenodd" d="M2 9a2 2 0 012-2h12a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V9zm4 4a1 1 0 011-1h2a1 1 0 110 2H7a1 1 0 01-1-1zm6 0a1 1 0 100-2h2a1 1 0 100 2h-2z" clipRule="evenodd" />
-              </svg>
+            <div className="flex-shrink-0">
+              <img src="/logo.svg" alt="Battery Shop Logo" className="h-9 w-9 object-contain filter drop-shadow-[0_2px_6px_rgba(6,182,212,0.2)]" />
             </div>
             <div>
               <h1 className="text-lg font-bold text-text-primary leading-tight">Battery Shop</h1>

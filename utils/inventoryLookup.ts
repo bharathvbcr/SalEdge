@@ -22,14 +22,12 @@ export function lookupByBarcode(
     code: string,
     inventory: InventoryItem[],
     productTypes: ProductType[],
-    firmId?: string
+    firmId?: string // ignored — inventory is shared across billing firms
 ): InventoryLookupResult | null {
     const q = norm(code);
     if (!q) return null;
 
-    const firmInventory = firmId ? inventory.filter(i => i.firmId === firmId) : inventory;
-
-    const serialMatch = firmInventory.find(i => i.serialNumber && norm(i.serialNumber) === q);
+    const serialMatch = inventory.find(i => i.serialNumber && norm(i.serialNumber) === q);
     if (serialMatch) {
         const productType = productTypes.find(pt => pt.id === serialMatch.productTypeId);
         return {
@@ -41,7 +39,7 @@ export function lookupByBarcode(
         };
     }
 
-    const batchMatch = firmInventory.find(i => i.batchNumber && norm(i.batchNumber) === q);
+    const batchMatch = inventory.find(i => i.batchNumber && norm(i.batchNumber) === q);
     if (batchMatch) {
         const productType = productTypes.find(pt => pt.id === batchMatch.productTypeId);
         return {
@@ -53,7 +51,7 @@ export function lookupByBarcode(
         };
     }
 
-    const idMatch = firmInventory.find(i => norm(i.id) === q);
+    const idMatch = inventory.find(i => norm(i.id) === q);
     if (idMatch) {
         const productType = productTypes.find(pt => pt.id === idMatch.productTypeId);
         return {
@@ -67,7 +65,7 @@ export function lookupByBarcode(
 
     const productByBarcode = productTypes.find(pt => pt.barcode && norm(pt.barcode) === q);
     if (productByBarcode) {
-        const batches = firmInventory.filter(i => i.productTypeId === productByBarcode.id);
+        const batches = inventory.filter(i => i.productTypeId === productByBarcode.id);
         const totalStock = batches.reduce((sum, b) => sum + b.stock, 0);
         return {
             matchType: 'product_barcode',
@@ -79,7 +77,7 @@ export function lookupByBarcode(
 
     const productById = productTypes.find(pt => norm(pt.id) === q);
     if (productById) {
-        const batches = firmInventory.filter(i => i.productTypeId === productById.id);
+        const batches = inventory.filter(i => i.productTypeId === productById.id);
         const totalStock = batches.reduce((sum, b) => sum + b.stock, 0);
         return {
             matchType: 'product_id',
@@ -96,17 +94,16 @@ export function searchInventory(
     query: string,
     inventory: InventoryItem[],
     productTypes: ProductType[],
-    firmId?: string,
+    firmId?: string, // ignored — inventory is shared across billing firms
     limit = 20
 ): InventoryLookupResult[] {
     const q = norm(query);
     if (!q) return [];
 
-    const firmInventory = firmId ? inventory.filter(i => i.firmId === firmId) : inventory;
     const results: InventoryLookupResult[] = [];
     const seen = new Set<string>();
 
-    for (const item of firmInventory) {
+    for (const item of inventory) {
         const productType = productTypes.find(pt => pt.id === item.productTypeId);
         const name = getProductName(productType).toLowerCase();
         const matches =
@@ -133,7 +130,7 @@ export function searchInventory(
         for (const pt of productTypes) {
             const name = getProductName(pt).toLowerCase();
             if (name.includes(q) || pt.barcode?.toLowerCase().includes(q) || pt.id.toLowerCase().includes(q)) {
-                const batches = firmInventory.filter(i => i.productTypeId === pt.id);
+                const batches = inventory.filter(i => i.productTypeId === pt.id);
                 const key = `pt:${pt.id}`;
                 if (!seen.has(key)) {
                     seen.add(key);

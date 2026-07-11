@@ -13,6 +13,9 @@ dist-ssr
 dist-server
 data/
 .venv-semantic/
+.certs/
+.bsms-dev/
+.env
 __pycache__/
 *.pyc
 **/target/

@@ -167,16 +167,13 @@ export const ReportsPage: React.FC = () => {
         return { topCustomers };
     }, [filteredTransactions]);
 
-    const firmInventory = useMemo(() => {
-        if (firmFilter === 'all') return inventory;
-        return inventory.filter(i => i.firmId === firmFilter);
-    }, [inventory, firmFilter]);
+    const shopInventory = useMemo(() => inventory, [inventory]);
 
     const inventoryValuationReport = useMemo(() => {
-        const totalDealerValue = firmInventory.reduce((sum, item) => sum + (item.purchasePrice * item.stock), 0);
-        const totalMrpValue = firmInventory.reduce((sum, item) => sum + (item.mrp * item.stock), 0);
+        const totalDealerValue = shopInventory.reduce((sum, item) => sum + (item.purchasePrice * item.stock), 0);
+        const totalMrpValue = shopInventory.reduce((sum, item) => sum + (item.mrp * item.stock), 0);
         return { totalDealerValue, totalMrpValue };
-    }, [firmInventory]);
+    }, [shopInventory]);
 
     const firmPurchases = useMemo(() => {
         if (firmFilter === 'all') return purchases;
@@ -202,13 +199,13 @@ export const ReportsPage: React.FC = () => {
     );
 
     const inventoryTurnover = useMemo(
-        () => computeInventoryTurnover(filteredTransactions, firmInventory, productTypes, periodDays),
-        [filteredTransactions, firmInventory, productTypes, periodDays]
+        () => computeInventoryTurnover(filteredTransactions, shopInventory, productTypes, periodDays),
+        [filteredTransactions, shopInventory, productTypes, periodDays]
     );
 
     const slowMovingStock = useMemo(
-        () => computeSlowMovingStock(filteredTransactions, firmInventory, productTypes).slice(0, 10),
-        [filteredTransactions, firmInventory, productTypes]
+        () => computeSlowMovingStock(filteredTransactions, shopInventory, productTypes).slice(0, 10),
+        [filteredTransactions, shopInventory, productTypes]
     );
 
     const salesByCategory = useMemo(
@@ -431,27 +428,33 @@ export const ReportsPage: React.FC = () => {
 
     return (
         <div className="page-shell">
-            <PageHeader title="Reports">
-                <select
-                    value={firmFilter}
-                    onChange={e => setFirmFilter(e.target.value)}
-                    className="form-input w-auto text-sm py-2"
-                >
-                    <option value="all">All Firms (Consolidated)</option>
-                    {config.firms.map(f => (
-                        <option key={f.id} value={f.id}>{f.shopDetails.name}</option>
-                    ))}
-                </select>
-                <PeriodFilterBar value={filter} onChange={setFilter} />
-                <button onClick={handleGSTR1Export} className="btn-secondary text-blue-600 border-blue-200">
-                    <IconDownload className="h-4 w-4" /> GSTR-1
-                </button>
-                <button onClick={handleGSTR3BExport} className="btn-secondary text-indigo-600 border-indigo-200">
-                    <IconDownload className="h-4 w-4" /> GSTR-3B
-                </button>
-                <button onClick={handleExport} className="btn-secondary">
-                    <IconDownload className="h-4 w-4" /> Export
-                </button>
+            <PageHeader title="Reports" subtitle="Sales, GST, and financial summaries">
+                <div className="page-toolbar-row">
+                    <select
+                        value={firmFilter}
+                        onChange={e => setFirmFilter(e.target.value)}
+                        className="form-input w-auto min-w-[12rem] text-sm py-2"
+                    >
+                        <option value="all">All Firms (Consolidated)</option>
+                        {config.firms.map(f => (
+                            <option key={f.id} value={f.id}>{f.shopDetails.name}</option>
+                        ))}
+                    </select>
+                    <div className="page-toolbar-actions">
+                        <div className="btn-group">
+                            <button type="button" onClick={handleGSTR1Export} className="btn-secondary text-sm">
+                                <IconDownload className="h-4 w-4" /> GSTR-1
+                            </button>
+                            <button type="button" onClick={handleGSTR3BExport} className="btn-secondary text-sm">
+                                <IconDownload className="h-4 w-4" /> GSTR-3B
+                            </button>
+                        </div>
+                        <button type="button" onClick={handleExport} className="btn-secondary text-sm">
+                            <IconDownload className="h-4 w-4" /> Export
+                        </button>
+                    </div>
+                </div>
+                <PeriodFilterBar value={filter} onChange={setFilter} fullWidth />
             </PageHeader>
 
             <DailyCloseSection firmFilter={firmFilter} />
@@ -554,7 +557,8 @@ export const ReportsPage: React.FC = () => {
             </div>
 
             <div className="card-section-padded">
-                <h3 className="text-lg font-bold text-text-primary mb-4">Current Inventory Valuation</h3>
+                <h3 className="text-lg font-bold text-text-primary mb-1">Current Inventory Valuation</h3>
+                <p className="text-sm text-text-muted mb-4">Shop-wide stock — same total regardless of firm filter above.</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <ReportMetric
                         label="Total Value (Dealer Price)"
@@ -740,7 +744,8 @@ export const ReportsPage: React.FC = () => {
 
                 {/* Inventory Turnover */}
                 <div className="card-section-padded">
-                    <h3 className="text-lg font-bold text-text-primary mb-4">Inventory Turnover</h3>
+                    <h3 className="text-lg font-bold text-text-primary mb-1">Inventory Turnover</h3>
+                    <p className="text-sm text-text-muted mb-4">Based on shop-wide stock; sales filtered by firm above.</p>
                     {inventoryTurnover.length > 0 ? (
                         <div className="table-wrap rounded-lg border border-border-color overflow-hidden max-h-80 overflow-y-auto">
                             <table className="data-table">

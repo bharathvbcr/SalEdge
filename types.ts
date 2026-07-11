@@ -43,7 +43,7 @@ export interface ScrapItem {
 
 export interface InventoryItem {
     id: string;
-    firmId: string; // New: Multi-branch support
+    firmId: string; // Legacy field — inventory is shared across billing firms (see sharedInventory.ts)
     productTypeId: string; // Replaces 'name' for data consistency
     supplierId?: string; // New: Link to Supplier
     type: 'New' | 'Refurbished';
@@ -168,6 +168,8 @@ export interface Transaction {
     };
     redeemedPoints?: number; // New: Points used in this transaction
     taxRegime: 'Regular' | 'Composition';
+    priceIncludesTax?: boolean;
+    clubBuybackDiscount?: boolean;
     taxAmount: number;
     // GST Split Totals
     totalCgst?: number;
@@ -411,7 +413,10 @@ export interface AiSettings {
     geminiApiKey?: string;
     geminiModel?: string;
     ollamaBaseUrl?: string;
+    /** Invoice OCR model. Use "auto" or leave empty to pick from installed models. */
     ollamaVisionModel?: string;
+    /** Chat/insights direct Ollama fallback. Use "auto" or leave empty to pick from installed models. */
+    ollamaTextModel?: string;
     /** Route text AI (chat, insights) through the local semantic layer middleware. */
     semanticLayerEnabled?: boolean;
     semanticLayerUrl?: string;

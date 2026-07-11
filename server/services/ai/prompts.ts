@@ -52,7 +52,7 @@ export const SNAPSHOT_GLOSSARY = `BUSINESS SNAPSHOT FIELD GUIDE (all money is IN
 - sales.transactionCount: a COUNT of completed sales, not money.
 - momGrowth.growthPercent: latest month-over-month revenue change %. salesTrend: trailing months for trend/"vs last month" questions.
 - topProducts[].lineRevenueExTax: per-product line revenue for RANKING ONLY; it does not sum to sales.revenueExTax.
-- inventory.lowStockProductCount / slowMovingProductCount: COUNTS of products.
+- inventory.lowStockProductCount / slowMovingProductCount: COUNTS of products. Inventory is ONE shared physical stock pool across all billing firms (firmId on sales/purchases is for invoicing only).
 - receivables.agingAmountInr.* / payables.agingAmountInr.*: money owed in INR bucketed by days overdue (current=0-30, days31_60, days61_90, over90, total). For "how much is overdue" use these amounts.
 - receivables.overdueInvoiceCount / upcomingDueInvoiceCount and payables.overdueBillCount / upcomingDueBillCount: COUNTS of invoices/bills, never rupee amounts. For "how many" use these.`;
 

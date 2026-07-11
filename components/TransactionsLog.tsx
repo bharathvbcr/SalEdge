@@ -88,7 +88,7 @@ export const TransactionsLog: React.FC<TransactionsLogProps> = ({
     };
 
     return (
-        <div className="card-section p-4 md:p-6">
+        <div className="card-section p-4 md:p-6 min-w-0 overflow-x-auto">
             <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-3 mb-4">
                  <div className="toolbar">
                     {onTodayFilter && (
@@ -116,7 +116,7 @@ export const TransactionsLog: React.FC<TransactionsLogProps> = ({
                     className="w-full lg:w-auto lg:min-w-[16rem]"
                 />
             </div>
-            <div className="table-wrap rounded-lg border border-border-color overflow-hidden">
+            <div className="table-wrap rounded-lg border border-border-color">
                 <table className="data-table">
                     <thead>
                         <tr>

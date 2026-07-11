@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useId } from 'react';
 import { IconX } from './icons.tsx';
 import { hapticSuccess, playScanBeep } from '../utils/haptics.ts';
+import { needsHttpsForCamera } from '../utils/mobileConnect.ts';
 
 interface BarcodeScannerProps {
     onScan: (code: string) => void;
@@ -75,7 +76,10 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
                 setTorchSupported(false);
             }
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Camera access denied');
+            const message = err instanceof Error ? err.message : 'Camera access denied';
+            setError(needsHttpsForCamera()
+                ? 'Camera requires HTTPS on your phone. Re-scan the QR code from the desktop app — it uses a secure link.'
+                : message);
             setIsRunning(false);
         }
     }, [active, onScan, pauseOnScan, scanSound, stopScanner]);

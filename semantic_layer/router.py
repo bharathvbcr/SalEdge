@@ -20,9 +20,9 @@ class ModelTier(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class RouterConfig:
-    tier_small_model: str = "phi3:mini"
-    tier_medium_model: str = "llama3.2:3b"
-    tier_large_model: str = "llama3.1:8b"
+    tier_small_model: str = ""
+    tier_medium_model: str = ""
+    tier_large_model: str = ""
     threshold_low: float = 0.4
     threshold_high: float = 0.7
 

@@ -1,11 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
   <defs>
-    <!-- Background Gradient -->
-    <radialGradient id="bgGrad" cx="50%" cy="50%" r="70%">
-      <stop offset="0%" stop-color="#1e293b" />
-      <stop offset="100%" stop-color="#0f172a" />
-    </radialGradient>
-    
     <!-- Metallic Shell Gradient -->
     <linearGradient id="metalGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#94a3b8" />
@@ -37,9 +31,6 @@
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
   </defs>
-
-  <!-- Clean Rounded Base Card -->
-  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" stroke="#334155" stroke-width="8" />
 
   <!-- Battery Top Cap -->
   <path d="M 216 90 L 296 90 A 12 12 0 0 1 308 102 L 308 116 L 204 116 L 204 102 A 12 12 0 0 1 216 90 Z" fill="url(#metalGrad)" />

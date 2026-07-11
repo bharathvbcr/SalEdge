@@ -20,6 +20,7 @@ from semantic_layer.config import InferenceBackend, SemanticLayerConfig
 from semantic_layer.embedder import EmbedderService
 from semantic_layer.metrics import SemanticMetrics
 from semantic_layer.orchestrator import PipelineRequest, SemanticOrchestrator
+from semantic_layer.ollama_discovery import discover_tier_models
 from semantic_layer.router import SemanticRouter
 
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +30,21 @@ config = SemanticLayerConfig()
 orchestrator: SemanticOrchestrator | None = None
 metrics = SemanticMetrics()
 backend: BaseInferenceBackend | None = None
+
+
+def resolve_tier_models(cfg: SemanticLayerConfig) -> tuple[str, str, str]:
+    """Use env overrides when set; otherwise discover from Ollama /api/tags."""
+    if cfg.tier_small_model and cfg.tier_medium_model and cfg.tier_large_model:
+        return cfg.tier_small_model, cfg.tier_medium_model, cfg.tier_large_model
+
+    small, medium, large = discover_tier_models(cfg.ollama_base_url)
+    logger.info(
+        "Discovered Ollama tier models: small=%s medium=%s large=%s",
+        small,
+        medium,
+        large,
+    )
+    return small, medium, large
 
 
 def create_backend(cfg: SemanticLayerConfig) -> BaseInferenceBackend:
@@ -41,7 +57,7 @@ def create_backend(cfg: SemanticLayerConfig) -> BaseInferenceBackend:
             model_id=cfg.hf_model_id,
             device=cfg.hf_device,
             max_new_tokens=cfg.hf_max_new_tokens,
-            default_model=cfg.tier_medium_model,
+            default_model=cfg.tier_medium_model or "llama3.2:3b",
         )
     raise ValueError(f"Unsupported inference backend: {cfg.inference_backend}")
 
@@ -73,10 +89,11 @@ def create_orchestrator(
             ),
         ),
     )
+    tier_small, tier_medium, tier_large = resolve_tier_models(cfg)
     router = SemanticRouter(
-        tier_small_model=cfg.tier_small_model,
-        tier_medium_model=cfg.tier_medium_model,
-        tier_large_model=cfg.tier_large_model,
+        tier_small_model=tier_small,
+        tier_medium_model=tier_medium,
+        tier_large_model=tier_large,
         threshold_low=cfg.complexity_threshold_low,
         threshold_high=cfg.complexity_threshold_high,
     )

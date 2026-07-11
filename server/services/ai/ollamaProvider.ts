@@ -3,6 +3,7 @@ import { CHAT_SYSTEM, INSIGHTS_SYSTEM, buildChatPrompt, buildInsightsPrompt, bui
 import { parseJsonFromText, parseChatResponseText, validateInsights, validatePurchaseExtraction } from './jsonUtils.js';
 import { buildChatRagChunks, buildInsightsRagChunks } from './ragChunks.js';
 import { checkSemanticLayerHealth, semanticLayerQuery } from './semanticLayerClient.js';
+import { resolveOllamaModels, type ResolvedOllamaModels } from './ollamaModels.js';
 import type { AiProvider, ResolvedAiSettings } from './types.js';
 
 interface OllamaChatResponse {
@@ -39,17 +40,38 @@ async function ollamaChat(
     return content;
 }
 
+async function resolveModels(settings: ResolvedAiSettings): Promise<ResolvedOllamaModels> {
+    return resolveOllamaModels({
+        baseUrl: settings.ollamaBaseUrl,
+        visionModel: settings.ollamaVisionModel,
+        textModel: settings.ollamaTextModel,
+    });
+}
+
 async function withSemanticFallback<T>(
     settings: ResolvedAiSettings,
+    models: ResolvedOllamaModels,
     semanticFn: () => Promise<T>,
     directFn: () => Promise<T>,
+    op: string,
 ): Promise<T> {
     if (!settings.semanticLayerEnabled) {
+        // #region agent log
+        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H7',location:'server/services/ai/ollamaProvider.ts:withSemanticFallback',message:'Semantic layer disabled — direct Ollama',data:{op,model:models.textModel,baseUrl:settings.ollamaBaseUrl},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         return directFn();
     }
     try {
-        return await semanticFn();
+        const result = await semanticFn();
+        // #region agent log
+        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H1',location:'server/services/ai/ollamaProvider.ts:withSemanticFallback',message:'Semantic layer path succeeded',data:{op},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        return result;
     } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        // #region agent log
+        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H1-H3',location:'server/services/ai/ollamaProvider.ts:withSemanticFallback',message:'Semantic fallback to direct Ollama',data:{op,error:errMsg,model:models.textModel,baseUrl:settings.ollamaBaseUrl},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         console.warn('Semantic layer unavailable, falling back to direct Ollama:', err);
         return directFn();
     }
@@ -57,7 +79,6 @@ async function withSemanticFallback<T>(
 
 export function createOllamaProvider(settings: ResolvedAiSettings): AiProvider {
     const baseUrl = settings.ollamaBaseUrl;
-    const visionModel = settings.ollamaVisionModel;
 
     return {
         async testConnection() {
@@ -73,32 +94,45 @@ export function createOllamaProvider(settings: ResolvedAiSettings): AiProvider {
             }
 
             try {
-                const text = await ollamaChat(baseUrl, visionModel, [
+                const models = await resolveModels(settings);
+                const text = await ollamaChat(baseUrl, models.textModel, [
                     { role: 'user', content: TEST_CONNECTION_PROMPT },
                 ], { jsonFormat: true });
                 parseJsonFromText(text);
-                const ollamaMsg = `Connected to Ollama (${visionModel}).`;
+
+                const modelSummary = `Text: ${models.textModel}, Vision: ${models.visionModel} (${models.available.length} model${models.available.length === 1 ? '' : 's'} available).`;
+                const ollamaMsg = `Connected to Ollama. Using ${modelSummary}`;
+                // #region agent log
+                fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H2',location:'server/services/ai/ollamaProvider.ts:testConnection',message:'Ollama test connection OK',data:{baseUrl,models,semanticChecks:checks},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion
                 return {
                     ok: true,
                     message: checks.length ? `${checks.join(' ')} ${ollamaMsg}` : ollamaMsg,
                 };
             } catch (err) {
-                return { ok: false, message: err instanceof Error ? err.message : 'Ollama connection failed.' };
+                const errMsg = err instanceof Error ? err.message : 'Ollama connection failed.';
+                // #region agent log
+                fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H2',location:'server/services/ai/ollamaProvider.ts:testConnection',message:'Ollama test connection failed',data:{baseUrl,error:errMsg},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion
+                return { ok: false, message: errMsg };
             }
         },
 
         async extractPurchaseInvoice(imageBase64, mimeType, catalog): Promise<PurchaseExtractionResult> {
             void mimeType;
+            const models = await resolveModels(settings);
             const prompt = buildInvoiceExtractionPrompt(catalog);
-            const text = await ollamaChat(baseUrl, visionModel, [
+            const text = await ollamaChat(baseUrl, models.visionModel, [
                 { role: 'user', content: prompt, images: [imageBase64] },
             ], { jsonFormat: true });
             return validatePurchaseExtraction(parseJsonFromText(text));
         },
 
         async generateInsights(snapshot: AiBusinessSnapshot, periodLabel: string): Promise<AiInsightsResult> {
+            const models = await resolveModels(settings);
             return withSemanticFallback(
                 settings,
+                models,
                 async () => {
                     const result = await semanticLayerQuery(settings.semanticLayerUrl, {
                         query: `Period: ${periodLabel}\n\nProduce actionable battery-shop business insights as JSON per the system instructions.`,
@@ -109,11 +143,12 @@ export function createOllamaProvider(settings: ResolvedAiSettings): AiProvider {
                 },
                 async () => {
                     const prompt = buildInsightsPrompt(snapshot, periodLabel);
-                    const text = await ollamaChat(baseUrl, visionModel, [
+                    const text = await ollamaChat(baseUrl, models.textModel, [
                         { role: 'user', content: prompt },
                     ], { jsonFormat: true });
                     return validateInsights(parseJsonFromText(text));
                 },
+                'generateInsights',
             );
         },
 
@@ -122,8 +157,10 @@ export function createOllamaProvider(settings: ResolvedAiSettings): AiProvider {
                 throw new Error('At least one message is required.');
             }
 
+            const models = await resolveModels(settings);
             return withSemanticFallback(
                 settings,
+                models,
                 async () => {
                     const latest = messages[messages.length - 1]?.content ?? '';
                     const result = await semanticLayerQuery(settings.semanticLayerUrl, {
@@ -135,11 +172,12 @@ export function createOllamaProvider(settings: ResolvedAiSettings): AiProvider {
                 },
                 async () => {
                     const prompt = buildChatPrompt(snapshot, actionContext, messages);
-                    const text = await ollamaChat(baseUrl, visionModel, [
+                    const text = await ollamaChat(baseUrl, models.textModel, [
                         { role: 'user', content: prompt },
                     ], { jsonFormat: true });
                     return parseChatResponseText(text);
                 },
+                'chat',
             );
         },
     };

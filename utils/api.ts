@@ -174,6 +174,25 @@ export async function aiChat(body: {
     });
 }
 
+export async function aiOllamaModels(body: {
+    aiSettings: AiSettings;
+}): Promise<{
+    available: string[];
+    selected: {
+        visionModel: string;
+        textModel: string;
+        tierSmall: string;
+        tierMedium: string;
+        tierLarge: string;
+    };
+    error?: string;
+}> {
+    return request('/api/ai/ollama-models', {
+        method: 'POST',
+        body: JSON.stringify(body),
+    });
+}
+
 export async function aiSemanticStatus(body: {
     aiSettings: AiSettings;
 }): Promise<{ enabled: boolean; available: boolean; url: string; message: string; latencyMs?: number }> {

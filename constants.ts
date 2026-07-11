@@ -36,10 +36,10 @@ export const INITIAL_PRODUCT_TYPES: ProductType[] = [
 
 
 export const INITIAL_INVENTORY: InventoryItem[] = [
-    { id: 'INV001', firmId: 'FIRM001', productTypeId: 'PROD001', type: 'New', serialNumber: 'AMRN123456', batchNumber: 'BN-A150-2310', purchaseDate: '2023-10-15', purchasePrice: 11500, mrp: 14500, stock: 1 },
-    { id: 'INV002', firmId: 'FIRM001', productTypeId: 'PROD002', type: 'New', serialNumber: 'EXD789012', batchNumber: 'BN-E100-2311', purchaseDate: '2023-11-02', purchasePrice: 8000, mrp: 9500, stock: 1 },
-    { id: 'INV003', firmId: 'FIRM002', productTypeId: 'PROD003', type: 'New', serialNumber: 'LUM345678', purchaseDate: '2023-09-20', purchasePrice: 17500, mrp: 21000, stock: 1 },
-    { id: 'INV004', firmId: 'FIRM002', productTypeId: 'PROD004', type: 'Refurbished', serialNumber: 'RF-EXD998877', purchaseDate: '2023-11-05', purchasePrice: 3500, mrp: 5500, stock: 1 },
+    { id: 'INV001', firmId: 'SHARED', productTypeId: 'PROD001', type: 'New', serialNumber: 'AMRN123456', batchNumber: 'BN-A150-2310', purchaseDate: '2023-10-15', purchasePrice: 11500, mrp: 14500, stock: 1 },
+    { id: 'INV002', firmId: 'SHARED', productTypeId: 'PROD002', type: 'New', serialNumber: 'EXD789012', batchNumber: 'BN-E100-2311', purchaseDate: '2023-11-02', purchasePrice: 8000, mrp: 9500, stock: 1 },
+    { id: 'INV003', firmId: 'SHARED', productTypeId: 'PROD003', type: 'New', serialNumber: 'LUM345678', purchaseDate: '2023-09-20', purchasePrice: 17500, mrp: 21000, stock: 1 },
+    { id: 'INV004', firmId: 'SHARED', productTypeId: 'PROD004', type: 'Refurbished', serialNumber: 'RF-EXD998877', purchaseDate: '2023-11-05', purchasePrice: 3500, mrp: 5500, stock: 1 },
 ];
 
 export const INITIAL_SERVICE_JOBS: ServiceJob[] = [

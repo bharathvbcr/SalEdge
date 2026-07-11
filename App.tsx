@@ -19,6 +19,7 @@ import { setStorageConflictHandler } from './hooks/useApiStorage.tsx';
 import { AppHeader } from './components/AppHeader.tsx';
 import { LoadingScreen, PageLoadingFallback } from './components/LoadingSpinner.tsx';
 import { getDefaultPage, isPageAllowed } from './utils/roleAccess.ts';
+import { clearMobilePageQuery, isMobileViewport, resolveInitialMobilePage, stashMobileRedirect, getRequestedPage } from './utils/mobileConnect.ts';
 import { SessionTimeoutWarning } from './components/SessionTimeoutWarning.tsx';
 import { QuickNavPalette } from './components/QuickNavPalette.tsx';
 
@@ -70,8 +71,14 @@ const MainLayout: React.FC = () => {
 
     useEffect(() => {
         if (userRole && !pageInitialized) {
-            setActivePageState(getDefaultPage(userRole));
+            const requestedPage = resolveInitialMobilePage();
+            const defaultPage = getDefaultPage(userRole, {
+                requestedPage,
+                mobile: isMobileViewport(),
+            });
+            setActivePageState(defaultPage);
             setPageInitialized(true);
+            if (requestedPage) clearMobilePageQuery();
         }
     }, [userRole, pageInitialized]);
 
@@ -146,6 +153,11 @@ const MainLayout: React.FC = () => {
 
 const AuthenticatedApp: React.FC = () => {
     const { isAuthenticated, isLoading } = useAuth();
+
+    useEffect(() => {
+        const page = getRequestedPage();
+        if (page) stashMobileRedirect(page);
+    }, []);
 
     if (isLoading) {
         return <LoadingScreen message="Checking session..." />;

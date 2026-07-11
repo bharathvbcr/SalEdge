@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
-import { IconShieldCheck } from './icons.tsx';
 import { TEST_LOGIN_ENABLED, TEST_ACCOUNTS, TestAccount } from '../utils/testLogin.ts';
+import { isMobileCompanionContext, stashMobileRedirect } from '../utils/mobileConnect.ts';
 
 export const LockScreen: React.FC = () => {
     const { login, register, allowRegistration } = useAuth();
@@ -11,6 +11,11 @@ export const LockScreen: React.FC = () => {
     const [displayName, setDisplayName] = useState('');
     const [error, setError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const mobileConnect = isMobileCompanionContext();
+
+    useEffect(() => {
+        if (mobileConnect) stashMobileRedirect('Mobile');
+    }, [mobileConnect]);
 
     const canRegister = allowRegistration;
 
@@ -54,14 +59,16 @@ export const LockScreen: React.FC = () => {
             </div>
 
             <div className="relative bg-bg-secondary p-8 rounded-2xl shadow-2xl w-full max-w-md border border-border-color animate-slide-up">
-                <div className="bg-brand-red w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-brand-red/25">
-                    <IconShieldCheck className="h-8 w-8 text-white" />
+                <div className="flex justify-center mb-6">
+                    <img src="/logo.svg" alt="Battery Shop Logo" className="h-20 w-20 object-contain filter drop-shadow-[0_4px_10px_rgba(6,182,212,0.25)] dark:drop-shadow-[0_4px_16px_rgba(6,182,212,0.4)]" />
                 </div>
                 <h1 className="text-2xl font-bold text-text-primary mb-1 text-center tracking-tight">
-                    Battery Shop
+                    {mobileConnect ? 'Mobile Companion' : 'Battery Shop'}
                 </h1>
                 <p className="text-text-muted mb-8 text-center text-sm">
-                    {mode === 'login' ? 'Sign in to manage your shop' : 'Create the first admin account'}
+                    {mobileConnect
+                        ? 'Sign in to start scanning and recording sales'
+                        : mode === 'login' ? 'Sign in to manage your shop' : 'Create the first admin account'}
                 </p>
 
                 <form onSubmit={handleSubmit} className="space-y-4">

@@ -4,8 +4,10 @@ import {
     createAiProvider,
     detectMimeType,
     resolveAiSettings,
+    resolveOllamaModels,
 } from '../services/ai/index.js';
 import { checkSemanticLayerHealth } from '../services/ai/semanticLayerClient.js';
+import { getActiveSemanticLayerUrl } from '../services/ai/semanticLayerProcess.js';
 
 function getAiSettings(body: { aiSettings?: AiSettings }): AiSettings {
     const settings = body.aiSettings;
@@ -105,7 +107,7 @@ export async function semanticStatusHandler(req: Request, res: Response): Promis
         const settings = (req.body as { aiSettings?: AiSettings }).aiSettings;
         const resolved = settings ? resolveAiSettings(settings) : {
             semanticLayerEnabled: false,
-            semanticLayerUrl: process.env.SEMANTIC_LAYER_URL?.trim() || 'http://127.0.0.1:8090',
+            semanticLayerUrl: getActiveSemanticLayerUrl(),
         } as ReturnType<typeof resolveAiSettings>;
 
         if (!resolved.semanticLayerEnabled) {
@@ -129,6 +131,39 @@ export async function semanticStatusHandler(req: Request, res: Response): Promis
     } catch (err) {
         console.error('AI semantic-status error:', err);
         res.status(500).json({ error: err instanceof Error ? err.message : 'Semantic status check failed.' });
+    }
+}
+
+export async function ollamaModelsHandler(req: Request, res: Response): Promise<void> {
+    try {
+        const { aiSettings } = req.body as { aiSettings?: AiSettings };
+        const resolved = aiSettings ? resolveAiSettings(aiSettings) : resolveAiSettings({
+            enabled: true,
+            provider: 'ollama',
+        });
+
+        const models = await resolveOllamaModels({
+            baseUrl: resolved.ollamaBaseUrl,
+            visionModel: resolved.ollamaVisionModel,
+            textModel: resolved.ollamaTextModel,
+        });
+
+        res.json({
+            available: models.available,
+            selected: {
+                visionModel: models.visionModel,
+                textModel: models.textModel,
+                tierSmall: models.tierSmall,
+                tierMedium: models.tierMedium,
+                tierLarge: models.tierLarge,
+            },
+        });
+    } catch (err) {
+        console.error('AI ollama-models error:', err);
+        res.status(502).json({
+            error: err instanceof Error ? err.message : 'Failed to list Ollama models.',
+            available: [],
+        });
     }
 }
 

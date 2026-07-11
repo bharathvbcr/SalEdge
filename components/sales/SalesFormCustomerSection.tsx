@@ -39,7 +39,6 @@ interface SalesFormCustomerSectionProps {
     creditLimitWarning: string | null;
     currencySymbol: string;
     isReturnMode: boolean;
-    saleFormMode: 'quick' | 'full';
     onWalkInPreset: () => void;
     compact?: boolean;
 }
@@ -52,15 +51,15 @@ export const SalesFormCustomerSection: React.FC<SalesFormCustomerSectionProps> =
     vehicleNumber, setVehicleNumber, vehicleModel, setVehicleModel,
     customerGst, setCustomerGst, placeOfSupply, setPlaceOfSupply,
     billingAddress, setBillingAddress, selectedCustomerData, creditLimitWarning,
-    currencySymbol, isReturnMode, saleFormMode, onWalkInPreset, compact = false,
+    currencySymbol, isReturnMode, onWalkInPreset, compact = false,
 }) => {
-    const [showAdvanced, setShowAdvanced] = useState(saleFormMode === 'full');
+    const [showAdvanced, setShowAdvanced] = useState(false);
     const { highlightIndex, setHighlightIndex, resetHighlight, handleKeyDown } = useSuggestionList(
         customerSuggestions,
         (c) => { onSelectCustomer(c); resetHighlight(); }
     );
 
-    const showGstFields = saleFormMode === 'full' || showAdvanced;
+    const showGstFields = showAdvanced;
     const customerError = customerNameError || phoneError || undefined;
 
     return (

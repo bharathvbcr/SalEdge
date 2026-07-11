@@ -8,17 +8,17 @@ import { useToast } from './ToastContext.tsx';
 import { useMasterData } from './MasterDataContext.tsx';
 import { useConfig } from './ConfigContext.tsx';
 import { isSerialInInventory, normalizeSerial, isSerialTrackedItem, clampSerialStock, parseTransactionSerials, findSerialInventoryRecord } from '../utils/serialNumbers.ts';
+import { SHARED_INVENTORY_FIRM_ID, normalizeInventoryFirmIds, sharedInventoryFirmId } from '../utils/sharedInventory.ts';
 
 interface AppDataContextType {
     isLoading: boolean;
     inventory: InventoryItem[];
     addStock: (newItem: Omit<InventoryItem, 'id'>, options?: { referenceId?: string; reason?: string }) => boolean;
-    transferStock: (inventoryItemId: string, targetFirmId: string, quantity: number) => void;
     updateStockQuantity: (inventoryItemId: string, quantityToAdd: number) => void;
     updateBatchDetails: (inventoryItemId: string, updatedDetails: Partial<Omit<InventoryItem, 'id' | 'stock' | 'productTypeId'>>) => void;
     deleteBatch: (inventoryItemId: string) => void;
     adjustStock: (inventoryItemId: string, newQuantity: number, reason: string) => void;
-    performStockTake: (firmId: string, adjustments: StockTakeAdjustment[]) => void;
+    performStockTake: (adjustments: StockTakeAdjustment[]) => void;
 
     scrapInventory: ScrapItem[];
     addScrapItem: (item: Omit<ScrapItem, 'id'>) => void;
@@ -69,7 +69,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
     const { productTypes } = useMasterData();
     const { config } = useConfig();
 
-    const [inventory, setInventory, invLoading] = useApiStorage<InventoryItem[]>('inventory', INITIAL_INVENTORY.map(item => ({ ...item, firmId: item.firmId || 'FIRM001' })));
+    const [inventory, setInventory, invLoading] = useApiStorage<InventoryItem[]>('inventory', normalizeInventoryFirmIds(INITIAL_INVENTORY));
     const [scrapInventory, setScrapInventory, scrapLoading] = useApiStorage<ScrapItem[]>('scrapInventory', []);
     const [serviceJobs, setServiceJobs, jobsLoading] = useApiStorage<ServiceJob[]>('serviceJobs', INITIAL_SERVICE_JOBS);
     const [transactions, setTransactions, txLoading] = useApiStorage<Transaction[]>('transactions', INITIAL_TRANSACTIONS.map(t => ({ ...t, type: t.type || 'Sale' })));
@@ -96,11 +96,11 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
     };
 
     useEffect(() => {
-        const hasMissingFirmId = inventory.some(item => !item.firmId);
-        if (hasMissingFirmId) {
-            setInventory(prev => prev.map(item => item.firmId ? item : { ...item, firmId: config.preferences.defaultFirmId || 'FIRM001' }));
+        const needsSharedFirm = inventory.some(item => item.firmId !== SHARED_INVENTORY_FIRM_ID);
+        if (needsSharedFirm) {
+            setInventory(prev => normalizeInventoryFirmIds(prev));
         }
-    }, [config.preferences.defaultFirmId]);
+    }, []);
 
     const getProductName = (productTypeId: string) => {
         const product = productTypes.find(p => p.id === productTypeId);
@@ -127,12 +127,12 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             addToast('Serial number is required for each battery.', 'error');
             return false;
         }
-        if (isSerialInInventory(serialNumber, inventory, newItem.firmId)) {
+        if (isSerialInInventory(serialNumber, inventory)) {
             addToast(`Serial "${serialNumber}" is already in stock.`, 'error');
             return false;
         }
 
-        const soldUnit = findSerialInventoryRecord(serialNumber, inventory, newItem.firmId);
+        const soldUnit = findSerialInventoryRecord(serialNumber, inventory);
         if (soldUnit && soldUnit.stock <= 0) {
             setInventory(prev => normalizeInventoryRecords(
                 prev.map(item =>
@@ -140,6 +140,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                         ? {
                             ...item,
                             ...newItem,
+                            firmId: sharedInventoryFirmId(),
                             serialNumber,
                             stock: 1,
                             purchaseDate: newItem.purchaseDate || item.purchaseDate,
@@ -163,6 +164,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         const newStockItem: InventoryItem = {
             id: `INV${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
             ...newItem,
+            firmId: sharedInventoryFirmId(),
             serialNumber,
             stock: 1,
         };
@@ -176,55 +178,6 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             referenceId: options?.referenceId,
         });
         return true;
-    };
-
-    const transferStock = (inventoryItemId: string, targetFirmId: string, quantity: number) => {
-        const sourceItem = inventory.find(i => i.id === inventoryItemId);
-        if (!sourceItem || sourceItem.stock < quantity) {
-            addToast('Insufficient stock for transfer.', 'error');
-            return;
-        }
-        if (isSerialTrackedItem(sourceItem) && quantity !== 1) {
-            addToast('Serial-tracked batteries must be transferred one at a time.', 'error');
-            return;
-        }
-
-        updateStockQuantity(inventoryItemId, -quantity);
-
-        const transferred = addStock({
-            firmId: targetFirmId,
-            productTypeId: sourceItem.productTypeId,
-            type: sourceItem.type,
-            serialNumber: sourceItem.serialNumber,
-            batchNumber: sourceItem.batchNumber,
-            purchaseDate: sourceItem.purchaseDate,
-            purchasePrice: sourceItem.purchasePrice,
-            mrp: sourceItem.mrp,
-            supplierId: sourceItem.supplierId,
-            stock: isSerialTrackedItem(sourceItem) ? 1 : quantity,
-        });
-        if (!transferred) {
-            if (isSerialTrackedItem(sourceItem)) {
-                addStock({
-                    firmId: sourceItem.firmId,
-                    productTypeId: sourceItem.productTypeId,
-                    type: sourceItem.type,
-                    serialNumber: sourceItem.serialNumber,
-                    batchNumber: sourceItem.batchNumber,
-                    purchaseDate: sourceItem.purchaseDate,
-                    purchasePrice: sourceItem.purchasePrice,
-                    mrp: sourceItem.mrp,
-                    supplierId: sourceItem.supplierId,
-                    stock: 1,
-                }, { reason: 'Transfer rollback' });
-            } else {
-                updateStockQuantity(inventoryItemId, quantity);
-            }
-            addToast('Transfer failed — stock restored at source.', 'error');
-            return;
-        }
-
-        addToast('Stock transferred successfully!', 'success');
     };
 
     const updateStockQuantity = (inventoryItemId: string, quantityToAdd: number) => {
@@ -271,7 +224,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (updatedDetails.serialNumber !== undefined) {
             const serial = normalizeSerial(updatedDetails.serialNumber);
             const item = inventory.find(i => i.id === inventoryItemId);
-            if (serial && item && isSerialInInventory(serial, inventory, item.firmId, inventoryItemId)) {
+            if (serial && item && isSerialInInventory(serial, inventory, undefined, inventoryItemId)) {
                 addToast(`Serial "${serial}" is already in stock.`, 'error');
                 return;
             }
@@ -329,14 +282,14 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         addToast('Stock quantity adjusted!', 'info');
     };
 
-    const performStockTake = (firmId: string, adjustments: StockTakeAdjustment[]) => {
+    const performStockTake = (adjustments: StockTakeAdjustment[]) => {
         const sessionId = `STK-${Date.now()}`;
         let adjustedCount = 0;
 
         setInventory(prev => {
             const updated = prev.map(item => {
                 const adj = adjustments.find(a => a.inventoryItemId === item.id);
-                if (!adj || item.firmId !== firmId || adj.countedQty === item.stock) return item;
+                if (!adj || adj.countedQty === item.stock) return item;
 
                 const countedQty = isSerialTrackedItem(item) ? clampSerialStock(adj.countedQty) : adj.countedQty;
                 const change = countedQty - item.stock;
@@ -627,12 +580,10 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
     const findBatchesForPurchaseItem = (purchase: Purchase, item: PurchaseItem, currentInventory: InventoryItem[]): InventoryItem[] => {
         if (item.serialNumbers && item.serialNumbers.length > 0) {
             return currentInventory.filter(inv =>
-                inv.firmId === purchase.firmId &&
                 item.serialNumbers!.includes(inv.serialNumber)
             );
         }
         return currentInventory.filter(inv =>
-            inv.firmId === purchase.firmId &&
             inv.productTypeId === item.productTypeId &&
             inv.purchaseDate === purchase.date &&
             inv.purchasePrice === item.unitPrice &&
@@ -653,7 +604,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             const serials = (item.serialNumbers ?? []).map(normalizeSerial).filter(Boolean);
             serials.forEach(sn => {
                 addStock({
-                    firmId: purchase.firmId,
+                    firmId: sharedInventoryFirmId(),
                     productTypeId: item.productTypeId,
                     type: item.type,
                     serialNumber: sn,
@@ -754,7 +705,6 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const isStockAffectingPurchaseChange = (original: Purchase, updated: Purchase) =>
         original.status !== updated.status ||
-        original.firmId !== updated.firmId ||
         original.date !== updated.date ||
         !purchaseItemsEqual(original.items, updated.items);
 
@@ -919,7 +869,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
     return (
         <AppDataContext.Provider value={{
             isLoading,
-            inventory, addStock, transferStock, updateStockQuantity, updateBatchDetails, deleteBatch, adjustStock, performStockTake,
+            inventory, addStock, updateStockQuantity, updateBatchDetails, deleteBatch, adjustStock, performStockTake,
             scrapInventory, addScrapItem, markScrapSold,
             serviceJobs, addServiceJob, updateServiceJob,
             transactions, addTransaction, updateTransaction, deleteTransaction, getTransactionDeleteWarnings, updateTransactionCompliance,

@@ -201,7 +201,7 @@ function normalizePurchaseRow(raw: Record<string, unknown>, ctx: PurchaseImportC
     const firmId = String(raw.firmId ?? ctx.defaultFirmId);
     if (status === 'Received') {
         items.forEach((item, idx) => {
-            const serialError = validateBatterySerials(item.serialNumbers ?? [], item.quantity, [], firmId, { requireAll: true });
+            const serialError = validateBatterySerials(item.serialNumbers ?? [], item.quantity, [], undefined, { requireAll: true });
             if (serialError) {
                 errors.push(`${label} item ${idx + 1}: ${serialError}`);
             }
@@ -320,7 +320,7 @@ export function parsePurchaseCsv(text: string, ctx: PurchaseImportContext): Purc
 
         if (status === 'Received') {
             items.forEach((item, idx) => {
-                const serialError = validateBatterySerials(item.serialNumbers ?? [], item.quantity, [], firmId, { requireAll: true });
+                const serialError = validateBatterySerials(item.serialNumbers ?? [], item.quantity, [], undefined, { requireAll: true });
                 if (serialError) {
                     errors.push(`Invoice ${invoiceNo} item ${idx + 1}: ${serialError}`);
                 }

@@ -4,14 +4,21 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkSemanticLayerHealth } from './semanticLayerClient.js';
+import { resolveOllamaModels } from './ollamaModels.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
+const PREFERRED_HOST = '127.0.0.1';
+const PREFERRED_PORT = 8090;
+const PORT_SCAN_MAX = 30;
+
 let child: ChildProcess | null = null;
 let starting = false;
+let activeSemanticLayerUrl: string | null = null;
 
 function parseBool(value: string | undefined, defaultValue: boolean): boolean {
     if (value === undefined || value === '') return defaultValue;
@@ -29,8 +36,107 @@ function shouldAutoStart(): boolean {
     return parseBool(process.env.SEMANTIC_LAYER_ENABLED, true);
 }
 
-function semanticLayerUrl(): string {
-    return process.env.SEMANTIC_LAYER_URL?.trim() || 'http://127.0.0.1:8090';
+/** True when SEMANTIC_LAYER_URL is unset or explicitly `auto` — pick a free local port. */
+function usesAutoPort(): boolean {
+    const raw = process.env.SEMANTIC_LAYER_URL?.trim();
+    return !raw || raw.toLowerCase() === 'auto';
+}
+
+function configuredSemanticLayerUrl(): string | null {
+    const raw = process.env.SEMANTIC_LAYER_URL?.trim();
+    if (!raw || raw.toLowerCase() === 'auto') return null;
+    return raw;
+}
+
+function semanticHost(): string {
+    return process.env.SEMANTIC_HOST?.trim() || PREFERRED_HOST;
+}
+
+function buildSemanticUrl(host: string, port: number): string {
+    return `http://${host}:${port}`;
+}
+
+/** URL used by AI routes — reflects auto-selected port after startup. */
+export function getActiveSemanticLayerUrl(): string {
+    return activeSemanticLayerUrl
+        || configuredSemanticLayerUrl()
+        || buildSemanticUrl(semanticHost(), PREFERRED_PORT);
+}
+
+function isPortFree(host: string, port: number): Promise<boolean> {
+    return new Promise(resolve => {
+        const server = net.createServer();
+        server.once('error', () => resolve(false));
+        server.once('listening', () => {
+            server.close(() => resolve(true));
+        });
+        server.listen(port, host);
+    });
+}
+
+async function findAvailablePort(host: string, startPort: number): Promise<number> {
+    for (let port = startPort; port < startPort + PORT_SCAN_MAX; port++) {
+        if (await isPortFree(host, port)) return port;
+    }
+
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.once('error', reject);
+        server.listen(0, host, () => {
+            const addr = server.address();
+            const port = typeof addr === 'object' && addr ? addr.port : 0;
+            server.close(() => resolve(port));
+        });
+    });
+}
+
+interface SemanticLayerTarget {
+    host: string;
+    port: number;
+    url: string;
+    alreadyRunning: boolean;
+}
+
+async function resolveSemanticLayerTarget(): Promise<SemanticLayerTarget> {
+    const explicit = configuredSemanticLayerUrl();
+    if (explicit) {
+        const parsed = new URL(explicit);
+        const host = parsed.hostname || semanticHost();
+        const port = Number(parsed.port) || PREFERRED_PORT;
+        const health = await checkSemanticLayerHealth(explicit, 1200);
+        if (health.available) activeSemanticLayerUrl = explicit;
+        return { host, port, url: explicit, alreadyRunning: health.available };
+    }
+
+    const host = semanticHost();
+
+    if (activeSemanticLayerUrl) {
+        const health = await checkSemanticLayerHealth(activeSemanticLayerUrl, 1200);
+        if (health.available) {
+            const parsed = new URL(activeSemanticLayerUrl);
+            return {
+                host: parsed.hostname || host,
+                port: Number(parsed.port) || PREFERRED_PORT,
+                url: activeSemanticLayerUrl,
+                alreadyRunning: true,
+            };
+        }
+        activeSemanticLayerUrl = null;
+    }
+
+    for (let port = PREFERRED_PORT; port < PREFERRED_PORT + PORT_SCAN_MAX; port++) {
+        const url = buildSemanticUrl(host, port);
+        const health = await checkSemanticLayerHealth(url, 800);
+        if (health.available) {
+            activeSemanticLayerUrl = url;
+            return { host, port, url, alreadyRunning: true };
+        }
+    }
+
+    const port = await findAvailablePort(host, PREFERRED_PORT);
+    const url = buildSemanticUrl(host, port);
+    activeSemanticLayerUrl = url;
+    return { host, port, url, alreadyRunning: false };
 }
 
 function ensureVenv(): void {
@@ -48,16 +154,21 @@ function ensureVenv(): void {
     }
 }
 
-function spawnSemanticLayer(port: string, host: string): void {
+function spawnSemanticLayer(port: string, host: string, extraEnv: Record<string, string> = {}): void {
     const python = existsSync(venvPythonPath()) ? venvPythonPath() : process.env.PYTHON || 'python3';
+
+    const ollamaBase =
+        extraEnv.SEMANTIC_OLLAMA_BASE_URL
+        || process.env.SEMANTIC_OLLAMA_BASE_URL
+        || process.env.OLLAMA_BASE_URL
+        || 'http://127.0.0.1:11434';
 
     const env = {
         ...process.env,
-        SEMANTIC_OLLAMA_BASE_URL:
-            process.env.SEMANTIC_OLLAMA_BASE_URL
-            || process.env.OLLAMA_BASE_URL
-            || 'http://127.0.0.1:11434',
+        ...extraEnv,
+        SEMANTIC_OLLAMA_BASE_URL: ollamaBase,
     };
+    delete env.PORT;
 
     child = spawn(
         python,
@@ -123,24 +234,50 @@ async function waitForHealthy(url: string, timeoutMs: number): Promise<boolean> 
 export async function ensureSemanticLayerRunning(): Promise<void> {
     if (!shouldAutoStart() || starting) return;
 
-    const url = semanticLayerUrl();
-    const existing = await checkSemanticLayerHealth(url, 1200);
-    if (existing.available) {
-        return;
-    }
-
     starting = true;
     try {
+        const target = await resolveSemanticLayerTarget();
+        // #region agent log
+        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'auto-port',hypothesisId:'H1',location:'server/services/ai/semanticLayerProcess.ts:ensureSemanticLayerRunning',message:'Resolved semantic layer target',data:{url:target.url,port:target.port,alreadyRunning:target.alreadyRunning,autoPort:usesAutoPort()},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+
+        if (target.alreadyRunning) {
+            return;
+        }
+
         ensureVenv();
 
-        const parsed = new URL(url);
-        const host = parsed.hostname || '127.0.0.1';
-        const port = parsed.port || '8090';
+        const ollamaBase =
+            process.env.SEMANTIC_OLLAMA_BASE_URL
+            || process.env.OLLAMA_BASE_URL
+            || 'http://127.0.0.1:11434';
 
-        console.log(`[semantic] starting on ${host}:${port}...`);
-        spawnSemanticLayer(port, host);
+        let tierEnv: Record<string, string> = {};
+        try {
+            const models = await resolveOllamaModels({ baseUrl: ollamaBase });
+            tierEnv = {
+                SEMANTIC_TIER_SMALL_MODEL: models.tierSmall,
+                SEMANTIC_TIER_MEDIUM_MODEL: models.tierMedium,
+                SEMANTIC_TIER_LARGE_MODEL: models.tierLarge,
+            };
+            // #region agent log
+            fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'model-discovery',hypothesisId:'H5',location:'server/services/ai/semanticLayerProcess.ts:ensureSemanticLayerRunning',message:'Discovered semantic tier models',data:{ollamaBase,available:models.available,tiers:tierEnv},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+        } catch (err) {
+            console.warn(
+                '[semantic] Could not discover Ollama models for tier routing:',
+                err instanceof Error ? err.message : err,
+            );
+        }
 
-        const ready = await waitForHealthy(url, 60_000);
+        console.log(
+            usesAutoPort()
+                ? `[semantic] auto-selected port ${target.port} (preferred ${PREFERRED_PORT} was unavailable)`
+                : `[semantic] starting on ${target.host}:${target.port}...`,
+        );
+        spawnSemanticLayer(String(target.port), target.host, tierEnv);
+
+        const ready = await waitForHealthy(target.url, 60_000);
         if (!ready) {
             console.warn(
                 '[semantic] not ready yet — chat and insights will use direct Ollama until it is.',
@@ -162,4 +299,5 @@ export function shutdownSemanticLayer(): void {
         child.kill('SIGTERM');
         child = null;
     }
+    activeSemanticLayerUrl = null;
 }

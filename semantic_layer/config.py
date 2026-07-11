@@ -22,7 +22,7 @@ class InferenceBackend(str, Enum):
 
 
 class SemanticLayerConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SEMANTIC_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="SEMANTIC_", env_file=".env", extra="ignore")
 
     # Embedding
     embedder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -45,10 +45,10 @@ class SemanticLayerConfig(BaseSettings):
     ood_gamma: float = 0.02
     ood_delta: float = 2.0
 
-    # Router
-    tier_small_model: str = "phi3:mini"
-    tier_medium_model: str = "llama3.2:3b"
-    tier_large_model: str = "llama3.1:8b"
+    # Router — empty defaults; resolved from Ollama tags at startup or via env overrides
+    tier_small_model: str = ""
+    tier_medium_model: str = ""
+    tier_large_model: str = ""
     complexity_threshold_low: float = 0.4
     complexity_threshold_high: float = 0.7
 

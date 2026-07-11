@@ -10,6 +10,7 @@ interface SalesFormCartSectionProps {
     viewMode: boolean;
     showValidation: boolean;
     currencySymbol: string;
+    gstRate: number;
     itemSearchQuery: string;
     onItemSearchChange: (value: string) => void;
     itemSuggestions: InventorySuggestion[];
@@ -25,7 +26,7 @@ interface SalesFormCartSectionProps {
 }
 
 export const SalesFormCartSection: React.FC<SalesFormCartSectionProps> = ({
-    cart, isReturnMode, viewMode, showValidation, currencySymbol,
+    cart, isReturnMode, viewMode, showValidation, currencySymbol, gstRate,
     itemSearchQuery, onItemSearchChange, itemSuggestions, showItemSuggestions,
     setShowItemSuggestions, onSelectItemSuggestion, onAddItem, onAddBuyback,
     onScanClick, onUpdateCart, onRemoveItem, searchInputRef,
@@ -46,7 +47,7 @@ export const SalesFormCartSection: React.FC<SalesFormCartSectionProps> = ({
                 item.isBuyback ? (
                     <BuybackItemCard key={item.itemId} item={item} onUpdate={onUpdateCart} onRemove={onRemoveItem} currencySymbol={currencySymbol} readOnly={viewMode} />
                 ) : (
-                    <CartItemCard key={item.itemId} item={item} onUpdate={onUpdateCart} onRemove={onRemoveItem} currencySymbol={currencySymbol} readOnly={viewMode} showValidation={showValidation} isReturnMode={isReturnMode} />
+                    <CartItemCard key={item.itemId} item={item} onUpdate={onUpdateCart} onRemove={onRemoveItem} currencySymbol={currencySymbol} gstRate={gstRate} readOnly={viewMode} showValidation={showValidation} isReturnMode={isReturnMode} />
                 )
             )}
 

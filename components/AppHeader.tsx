@@ -40,11 +40,14 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ activePage, onMenuClick, o
                 >
                     <IconMenu className="h-5 w-5" />
                 </button>
-                <div className="min-w-0 md:hidden">
-                    <h1 className="text-base font-bold text-text-primary truncate leading-tight">
-                        {pageTitle}
-                    </h1>
-                    <p className="text-[11px] text-text-muted truncate">Battery Shop</p>
+                <div className="flex items-center gap-2 min-w-0 md:hidden">
+                    <img src="/logo.svg" alt="Logo" className="h-8 w-8 object-contain flex-shrink-0 filter drop-shadow-[0_1px_3px_rgba(6,182,212,0.15)]" />
+                    <div className="min-w-0">
+                        <h1 className="text-base font-bold text-text-primary truncate leading-tight">
+                            {pageTitle}
+                        </h1>
+                        <p className="text-[10px] text-text-muted truncate font-medium">Battery Shop</p>
+                    </div>
                 </div>
             </div>
 

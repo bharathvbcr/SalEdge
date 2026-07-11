@@ -10,6 +10,7 @@ import { lookupByBarcode } from '../utils/inventoryLookup.ts';
 import { isSerialTrackedItem, validateUniqueCartSerials, parseTransactionSerials, serialsForQuantity } from '../utils/serialNumbers.ts';
 import { buildCustomerIndex, searchCustomers, findCustomerByPhone, CustomerRecord } from '../utils/customerLookup.ts';
 import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '../utils/saleDraft.ts';
+import { computeSaleTotals, computeBaseBeforeOverallDiscount, deriveOverallDiscountFromFinal } from '../utils/salePricing.ts';
 import { consumeSaleCustomerPrefill } from '../utils/pageActions.ts';
 import { getLastPaymentMethod, saveLastPaymentMethod, PaymentMethod } from '../utils/salePrefs.ts';
 import { useBarcodeWedge } from '../hooks/useBarcodeWedge.ts';
@@ -18,11 +19,12 @@ import { MobileScanModal } from './MobileScanModal.tsx';
 import { Modal } from './Modal.tsx';
 import { ConfirmationModal } from './ConfirmationModal.tsx';
 import { useToast } from '../context/ToastContext.tsx';
-import { CartItem, Payment, CustomerData, WizardStep, SaleFormMode, SaleTotals } from './sales/types.ts';
+import { CartItem, Payment, CustomerData, WizardStep, SaleTotals, PricingMode } from './sales/types.ts';
 import { SalesFormWizard } from './sales/SalesFormWizard.tsx';
 import { SalesFormCustomerSection } from './sales/SalesFormCustomerSection.tsx';
 import { SalesFormCartSection } from './sales/SalesFormCartSection.tsx';
 import { SalesFormPaymentSection } from './sales/SalesFormPaymentSection.tsx';
+import { SharedStockHint } from './SharedStockHint.tsx';
 import { ShortcutsCheatsheet } from './sales/ShortcutsCheatsheet.tsx';
 
 const getProductName = (productType: ProductType): string =>
@@ -58,7 +60,6 @@ export const SalesForm: React.FC<SalesFormProps> = ({
     const useWizard = isNewSale && !viewMode;
 
     const [wizardStep, setWizardStep] = useState<WizardStep>(initialWizardStep);
-    const [saleFormMode, setSaleFormMode] = useState<SaleFormMode>('quick');
 
     useEffect(() => { setViewMode(initialViewMode); }, [initialViewMode]);
     useEffect(() => { onStepChange?.(wizardStep); }, [wizardStep, onStepChange]);
@@ -97,6 +98,10 @@ export const SalesForm: React.FC<SalesFormProps> = ({
     const [showValidation, setShowValidation] = useState(false);
     const [taxRegime, setTaxRegime] = useState<'Regular' | 'Composition'>(activeFirm?.financials.taxRegime ?? 'Regular');
     const [overallDiscount, setOverallDiscount] = useState({ type: 'percentage' as 'percentage' | 'fixed', value: 0 });
+    const [finalPriceOverride, setFinalPriceOverride] = useState<number | null>(null);
+    const [finalPriceLocked, setFinalPriceLocked] = useState(false);
+    const [pricingMode, setPricingMode] = useState<PricingMode>('discount-drives');
+    const [clubBuybackWithDiscount, setClubBuybackWithDiscount] = useState(false);
     const [pointsToRedeem, setPointsToRedeem] = useState(0);
     const [cart, setCart] = useState<CartItem[]>([]);
     const [payments, setPayments] = useState<Payment[]>([]);
@@ -139,6 +144,10 @@ export const SalesForm: React.FC<SalesFormProps> = ({
                 setPointsToRedeem(sourceTransaction.redeemedPoints || 0);
                 setPayments(sourceTransaction.payments.map((p, index) => ({ ...p, id: index })));
                 setNotes(sourceTransaction.notes || '');
+                setFinalPriceOverride(sourceTransaction.total);
+                setFinalPriceLocked(true);
+                setPricingMode('final-drives');
+                setClubBuybackWithDiscount(sourceTransaction.clubBuybackDiscount ?? false);
             } else {
                 setSaleDate(new Date().toISOString().split('T')[0]);
                 setInvoiceNumber('');
@@ -210,7 +219,11 @@ export const SalesForm: React.FC<SalesFormProps> = ({
                 setPayments(draft.payments as Payment[]);
                 setNotes(draft.notes);
                 setWizardStep(draft.wizardStep as WizardStep);
-                setSaleFormMode(draft.saleFormMode);
+                if (draft.overallDiscount) setOverallDiscount(draft.overallDiscount);
+                if (draft.finalPriceOverride != null) setFinalPriceOverride(draft.finalPriceOverride);
+                if (draft.finalPriceLocked != null) setFinalPriceLocked(draft.finalPriceLocked);
+                if (draft.pricingMode) setPricingMode(draft.pricingMode);
+                if (draft.clubBuybackWithDiscount != null) setClubBuybackWithDiscount(draft.clubBuybackWithDiscount);
             } else {
                 const lastMethod = getLastPaymentMethod();
                 setPayments([{ id: Date.now(), method: lastMethod, amount: 0 }]);
@@ -229,49 +242,29 @@ export const SalesForm: React.FC<SalesFormProps> = ({
         if (activeFirm) setTaxRegime(activeFirm.financials.taxRegime);
     }, [selectedFirmId, activeFirm]);
 
-    const totals: SaleTotals = useMemo(() => {
-        let runningRegularItemsGross = 0;
-        let runningBuybackTotal = 0;
-        let runningItemDiscount = 0;
-        let runningTotalCost = 0;
+    const pointsRedemptionValue = loyaltySettings.enabled ? loyaltySettings.redemptionValue : 0;
 
-        cart.forEach(item => {
-            const itemGross = item.price * item.quantity;
-            if (item.isBuyback) {
-                runningBuybackTotal += itemGross;
-            } else {
-                runningRegularItemsGross += itemGross;
-                let itemDiscountAmount = 0;
-                if (item.discount.type === 'percentage') {
-                    itemDiscountAmount = itemGross * (item.discount.value / 100);
-                } else {
-                    itemDiscountAmount = item.discount.value * item.quantity;
-                }
-                runningItemDiscount += itemDiscountAmount;
-                if (item.purchasePrice !== undefined) runningTotalCost += item.purchasePrice * item.quantity;
-            }
-        });
+    const totals: SaleTotals = useMemo(() => computeSaleTotals({
+        cart,
+        overallDiscount,
+        additionalCharges,
+        pointsToRedeem,
+        pointsRedemptionValue,
+        taxRegime,
+        gstRate: activeFirm?.financials.gstRate ?? 0,
+        finalPriceOverride,
+        finalPriceLocked,
+        pricingMode,
+        isReturnMode,
+        clubBuybackWithDiscount,
+    }), [cart, overallDiscount, taxRegime, activeFirm?.financials.gstRate, additionalCharges, pointsToRedeem, pointsRedemptionValue, finalPriceOverride, finalPriceLocked, pricingMode, isReturnMode, clubBuybackWithDiscount]);
 
-        const totalGrossAmount = runningRegularItemsGross + runningBuybackTotal;
-        const subtotalWithCharges = totalGrossAmount - runningItemDiscount + (Number(additionalCharges.amount) || 0);
-        let runningOverallDiscount = overallDiscount.type === 'percentage'
-            ? subtotalWithCharges * (overallDiscount.value / 100)
-            : (isReturnMode ? -Math.abs(overallDiscount.value) : overallDiscount.value);
-        const pointsValue = loyaltySettings.enabled ? pointsToRedeem * loyaltySettings.redemptionValue : 0;
-        const taxableAmount = subtotalWithCharges - runningOverallDiscount - pointsValue;
-        const GST_RATE = (activeFirm?.financials.gstRate ?? 0) / 100;
-        let taxAmt = taxRegime === 'Regular' ? taxableAmount * GST_RATE : 0;
-        if (isReturnMode && taxableAmount < 0 && taxAmt > 0) taxAmt = -taxAmt;
-        const finalTotal = taxableAmount + taxAmt;
-        const revenueForProfit = (runningRegularItemsGross - runningItemDiscount) + (Number(additionalCharges.amount) || 0) - runningOverallDiscount - pointsValue;
-
-        return {
-            itemsTotal: totalGrossAmount, buybackTotal: runningBuybackTotal, totalItemDiscount: runningItemDiscount,
-            subtotal: subtotalWithCharges, overallDiscountAmount: runningOverallDiscount,
-            pointsDiscountValue: pointsValue, taxAmount: taxAmt, total: finalTotal,
-            estimatedProfit: revenueForProfit - runningTotalCost,
-        };
-    }, [cart, overallDiscount, taxRegime, activeFirm?.financials.gstRate, additionalCharges, pointsToRedeem, loyaltySettings, isReturnMode]);
+    useEffect(() => {
+        if (pricingMode !== 'final-drives' || !finalPriceLocked || finalPriceOverride === null) return;
+        const { baseBeforeDisc } = computeBaseBeforeOverallDiscount(cart, additionalCharges, pointsToRedeem, pointsRedemptionValue);
+        const derived = deriveOverallDiscountFromFinal(baseBeforeDisc, finalPriceOverride, isReturnMode);
+        setOverallDiscount(prev => prev.type === 'fixed' && prev.value === derived.value ? prev : derived);
+    }, [cart, additionalCharges, pointsToRedeem, pointsRedemptionValue, finalPriceLocked, finalPriceOverride, pricingMode, isReturnMode]);
 
     const { total } = totals;
 
@@ -300,7 +293,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
                 const tierDiscountPercent = getTierDiscountPercent(tier, loyaltySettings);
                 const profile = getCustomerProfile(makeCustomerId(customerName, customerPhone));
                 setSelectedCustomerData({ totalSpent, totalDue, lastSeen, loyaltyPoints, tier, creditLimit: profile?.creditLimit, tierDiscountPercent });
-                if (tierDiscountPercent > 0 && !transactionToEdit && overallDiscount.value === 0) {
+                if (tierDiscountPercent > 0 && !transactionToEdit && overallDiscount.value === 0 && !finalPriceLocked) {
                     setOverallDiscount({ type: 'percentage', value: tierDiscountPercent });
                 }
             } else {
@@ -310,7 +303,40 @@ export const SalesForm: React.FC<SalesFormProps> = ({
         } else {
             setSelectedCustomerData(null);
         }
-    }, [customerName, customerPhone, transactions, transactionToEdit, loyaltySettings, getCustomerProfile, overallDiscount.value]);
+    }, [customerName, customerPhone, transactions, transactionToEdit, loyaltySettings, getCustomerProfile, overallDiscount.value, finalPriceLocked]);
+
+    const handleOverallDiscountChange: React.Dispatch<React.SetStateAction<{ type: 'percentage' | 'fixed'; value: number }>> = (updater) => {
+        setPricingMode('discount-drives');
+        setFinalPriceLocked(false);
+        setFinalPriceOverride(null);
+        setOverallDiscount(updater);
+    };
+
+    const handleFinalPriceChange = (value: number) => {
+        const { baseBeforeDisc } = computeBaseBeforeOverallDiscount(cart, additionalCharges, pointsToRedeem, pointsRedemptionValue);
+        setFinalPriceOverride(value);
+        setFinalPriceLocked(true);
+        setPricingMode('final-drives');
+        setOverallDiscount(deriveOverallDiscountFromFinal(baseBeforeDisc, value, isReturnMode));
+    };
+
+    const handleRoundFinal = () => {
+        handleFinalPriceChange(Math.round(totals.computedFinalBeforeRound));
+    };
+
+    const handleResetFinal = () => {
+        setFinalPriceOverride(null);
+        setFinalPriceLocked(false);
+        setPricingMode('discount-drives');
+        const tierPct = selectedCustomerData?.tierDiscountPercent ?? 0;
+        setOverallDiscount({ type: 'percentage', value: tierPct });
+    };
+
+    const handleEditDiscountManually = () => {
+        setPricingMode('discount-drives');
+        setFinalPriceLocked(false);
+        setFinalPriceOverride(null);
+    };
 
     const totalPaid = useMemo(() => payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), [payments]);
     const amountDue = Math.abs(total) - totalPaid;
@@ -327,8 +353,8 @@ export const SalesForm: React.FC<SalesFormProps> = ({
     const availableInventory = useMemo(() => {
         const cartItemIds = cart.map(item => item.itemId);
         if (isReturnMode) return [];
-        return inventory.filter(item => !cartItemIds.includes(item.id) && item.firmId === selectedFirmId && item.stock > 0);
-    }, [inventory, cart, selectedFirmId, isReturnMode]);
+        return inventory.filter(item => !cartItemIds.includes(item.id) && item.stock > 0);
+    }, [inventory, cart, isReturnMode]);
 
     const itemSuggestions = useMemo(() => {
         if (!itemSearchQuery) return [];
@@ -447,7 +473,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
         const batchMatch = availableInventory.find(i => !i.serialNumber && i.batchNumber?.toLowerCase() === trimmed.toLowerCase());
         if (batchMatch) { addInventoryToCart(batchMatch, trimmed); return; }
 
-        const result = lookupByBarcode(trimmed, inventory, productTypes, selectedFirmId);
+        const result = lookupByBarcode(trimmed, inventory, productTypes);
         if (result?.matchType === 'serial' || result?.matchType === 'inventory_id') {
             const item = result.inventoryItem;
             if (item?.stock) { addInventoryToCart(item, trimmed); return; }
@@ -463,7 +489,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
         }
         setItemSearchQuery(trimmed);
         setShowItemSuggestions(true);
-    }, [availableInventory, inventory, productTypes, selectedFirmId, addInventoryToCart, addToast]);
+    }, [availableInventory, inventory, productTypes, addInventoryToCart, addToast]);
 
     useBarcodeWedge(!viewMode && !isReturnMode, handleBarcodeScan);
 
@@ -473,11 +499,12 @@ export const SalesForm: React.FC<SalesFormProps> = ({
             saveSaleDraft({
                 savedAt: new Date().toISOString(), selectedFirmId, saleDate, customerName, customerPhone,
                 customerGst, billingAddress, vehicleNumber, vehicleModel, saleCategory, placeOfSupply,
-                cart, payments, notes, wizardStep, saleFormMode,
+                cart, payments, notes, wizardStep, overallDiscount, finalPriceOverride, finalPriceLocked,
+                pricingMode, clubBuybackWithDiscount,
             });
         }, 30000);
         return () => clearInterval(timer);
-    }, [isNewSale, viewMode, cart, selectedFirmId, saleDate, customerName, customerPhone, customerGst, billingAddress, vehicleNumber, vehicleModel, saleCategory, placeOfSupply, payments, notes, wizardStep, saleFormMode]);
+    }, [isNewSale, viewMode, cart, selectedFirmId, saleDate, customerName, customerPhone, customerGst, billingAddress, vehicleNumber, vehicleModel, saleCategory, placeOfSupply, payments, notes, wizardStep, overallDiscount, finalPriceOverride, finalPriceLocked, pricingMode, clubBuybackWithDiscount]);
 
     const handleAddItem = () => {
         const query = itemSearchQuery.trim();
@@ -611,6 +638,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
             })),
             subtotal: totals.itemsTotal, discount: overallDiscount, redeemedPoints: pointsToRedeem,
             taxRegime, taxAmount: totals.taxAmount, total, payments: finalPayments, status: finalStatus, notes,
+            priceIncludesTax: true, clubBuybackDiscount: clubBuybackWithDiscount,
         };
         clearSaleDraft();
         if (finalPayments.length > 0) {
@@ -683,14 +711,14 @@ export const SalesForm: React.FC<SalesFormProps> = ({
             billingAddress={billingAddress} setBillingAddress={setBillingAddress}
             selectedCustomerData={selectedCustomerData} creditLimitWarning={creditLimitWarning}
             currencySymbol={currencySymbol} isReturnMode={isReturnMode}
-            saleFormMode={saleFormMode} onWalkInPreset={handleWalkInPreset} compact={compact}
+            onWalkInPreset={handleWalkInPreset} compact={compact}
         />
     );
 
     const renderCartSection = () => (
         <SalesFormCartSection
             cart={cart} isReturnMode={isReturnMode} viewMode={viewMode} showValidation={showValidation}
-            currencySymbol={currencySymbol} itemSearchQuery={itemSearchQuery}
+            currencySymbol={currencySymbol} gstRate={activeFirm.financials.gstRate ?? 0} itemSearchQuery={itemSearchQuery}
             onItemSearchChange={handleItemSearchChange} itemSuggestions={itemSuggestions}
             showItemSuggestions={showItemSuggestions} setShowItemSuggestions={setShowItemSuggestions}
             onSelectItemSuggestion={item => handleSelectItemSuggestion(item as InventoryItem & { fullName: string; productType?: ProductType })}
@@ -702,7 +730,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
 
     const renderPaymentSection = () => (
         <SalesFormPaymentSection
-            overallDiscount={overallDiscount} setOverallDiscount={setOverallDiscount}
+            overallDiscount={overallDiscount} setOverallDiscount={handleOverallDiscountChange}
             pointsToRedeem={pointsToRedeem} setPointsToRedeem={setPointsToRedeem}
             selectedCustomerData={selectedCustomerData} loyaltySettings={loyaltySettings}
             taxRegime={taxRegime} setTaxRegime={setTaxRegime} notes={notes} setNotes={setNotes}
@@ -713,31 +741,45 @@ export const SalesForm: React.FC<SalesFormProps> = ({
             additionalCharges={additionalCharges} setAdditionalCharges={setAdditionalCharges}
             currencySymbol={currencySymbol} viewMode={viewMode} isReturnMode={isReturnMode}
             paymentDueDateError={paymentDueDateError}
+            gstRate={activeFirm.financials.gstRate ?? 0}
+            pricingMode={pricingMode} finalPriceLocked={finalPriceLocked}
+            finalPriceOverride={finalPriceOverride}
+            onFinalPriceChange={handleFinalPriceChange}
+            onRoundFinal={handleRoundFinal} onResetFinal={handleResetFinal}
+            onEditDiscountManually={handleEditDiscountManually}
+            clubBuybackWithDiscount={clubBuybackWithDiscount}
+            setClubBuybackWithDiscount={setClubBuybackWithDiscount}
         />
     );
 
     return (
         <>
-            <Modal onClose={onClose} size="full" className="max-w-7xl" ariaLabel="Sales Form">
+            <Modal onClose={onClose} size="full" className="max-w-7xl h-[95vh] !max-h-[95vh]" ariaLabel="Sales Form">
                 <header className="flex justify-between items-center p-4 border-b border-border-color">
                     <h2 className="text-xl font-bold text-text-primary">
                         {viewMode ? 'View Transaction Details' : (transactionToEdit ? 'Edit Transaction' : (isReturnMode ? 'Process Sales Return' : 'New Sale'))}
                     </h2>
-                    <div className="flex items-center gap-4">
-                        <div className="firm-switcher">
-                            {config.firms.map(firm => (
-                                <button key={firm.id} type="button" disabled={viewMode || isReturnMode} onClick={() => setSelectedFirmId(firm.id)} className={`firm-switcher-btn ${selectedFirmId === firm.id ? 'active' : ''}`}>{firm.shopDetails?.name ?? firm.id}</button>
-                            ))}
+                    <div className="flex flex-col items-end gap-1">
+                        <div className="flex items-center gap-4">
+                            <div className="flex flex-col items-end gap-0.5">
+                                <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Bill as</span>
+                                <div className="firm-switcher">
+                                    {config.firms.map(firm => (
+                                        <button key={firm.id} type="button" disabled={viewMode || isReturnMode} onClick={() => setSelectedFirmId(firm.id)} className={`firm-switcher-btn ${selectedFirmId === firm.id ? 'active' : ''}`}>{firm.shopDetails?.name ?? firm.id}</button>
+                                    ))}
+                                </div>
+                            </div>
+                            <ShortcutsCheatsheet />
+                            <button onClick={onClose} className="btn-icon" aria-label="Close"><IconX className="h-5 w-5" /></button>
                         </div>
-                        <ShortcutsCheatsheet />
-                        <button onClick={onClose} className="btn-icon" aria-label="Close"><IconX className="h-5 w-5" /></button>
+                        {config.firms.length > 1 && <SharedStockHint />}
                     </div>
                 </header>
 
                 <main className="flex-1 overflow-y-auto p-6 space-y-6">
                     <fieldset disabled={viewMode} className="contents group">
                         {useWizard && (
-                            <SalesFormWizard step={wizardStep} onStepChange={goToStep} saleFormMode={saleFormMode} onSaleFormModeChange={setSaleFormMode} />
+                            <SalesFormWizard step={wizardStep} onStepChange={goToStep} />
                         )}
 
                         {useWizard ? (

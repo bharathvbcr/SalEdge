@@ -3,9 +3,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { InventoryItem, ProductType } from '../types.ts';
 import { IconPlus, IconTrash, IconChevronDown } from './icons.tsx';
 import { Modal, ModalHeader, ModalFooter } from './Modal.tsx';
-import { useConfig } from '../context/ConfigContext.tsx';
 import { useMasterData } from '../context/MasterDataContext.tsx';
 import { useToast } from '../context/ToastContext.tsx';
+import { sharedInventoryFirmId } from '../utils/sharedInventory.ts';
 
 interface ManageStockModalProps {
     productType: ProductType;
@@ -62,14 +62,13 @@ const ExistingBatchRow: React.FC<{
 };
 
 export const AddStockModal: React.FC<ManageStockModalProps> = ({ productType, existingBatches, onClose, onAddBatch, onUpdateBatchDetails, onDeleteBatch }) => {
-    const { defaultFirm } = useConfig();
     const { suppliers } = useMasterData();
     const { addToast } = useToast();
     const mostRecentBatch = useMemo(() => {
         return [...existingBatches].sort((a,b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime())[0];
     }, [existingBatches]);
 
-    const firmId = defaultFirm?.id || existingBatches[0]?.firmId || '';
+    const firmId = sharedInventoryFirmId();
 
     const [newBatchData, setNewBatchData] = useState({
         productTypeId: productType.id,

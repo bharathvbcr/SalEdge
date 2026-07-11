@@ -58,11 +58,12 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
     const firm = useMemo(() => config.firms.find(f => f.id === liveTransaction.firmId) as Firm, [config.firms, liveTransaction.firmId]);
     const loyaltySettings = config.preferences.loyaltyProgram;
 
-    const { itemsTotal, totalItemDiscount, overallDiscountAmount, totalCost, estimatedProfit, pointsValue, netSubtotal } = useMemo(() => {
+    const { itemsTotal, totalItemDiscount, overallDiscountAmount, totalCost, estimatedProfit, pointsValue, netSubtotal, buybackTotal } = useMemo(() => {
         let runningItemsTotal = 0;
         let runningItemDiscount = 0;
         let runningTotalCost = 0;
         let runningRegularItemsGross = 0;
+        let runningBuybackTotal = 0;
 
         tx.items.forEach(item => {
             const itemGross = item.price * item.quantity;
@@ -75,7 +76,9 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                 }
             }
 
-            if (!item.isBuyback) {
+            if (item.isBuyback) {
+                runningBuybackTotal += itemGross;
+            } else {
                 runningRegularItemsGross += itemGross;
                 runningItemDiscount += itemDiscountAmount;
                 if (item.purchasePrice !== undefined) {
@@ -101,8 +104,10 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
 
         const pointsVal = (tx.redeemedPoints || 0) * (loyaltySettings.redemptionValue || 1);
 
-        const revenueForProfit = (runningRegularItemsGross - runningItemDiscount) + additionalChargesAmount - runningOverallDiscount - pointsVal;
-        const estimatedProfit = revenueForProfit - runningTotalCost;
+        const revenueForProfit = tx.priceIncludesTax
+            ? tx.total - tx.taxAmount
+            : (runningRegularItemsGross - runningItemDiscount) + additionalChargesAmount - runningOverallDiscount - pointsVal;
+        const profit = revenueForProfit - runningTotalCost;
 
         return {
             itemsTotal: runningItemsTotal,
@@ -111,7 +116,8 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
             overallDiscountAmount: runningOverallDiscount,
             pointsValue: pointsVal,
             totalCost: runningTotalCost,
-            estimatedProfit
+            estimatedProfit: profit,
+            buybackTotal: runningBuybackTotal,
         };
     }, [tx, loyaltySettings]);
 
@@ -259,9 +265,11 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                     <div id="receipt-content" className="p-6 bg-white text-gray-800 text-sm print:p-8">
                         <div className="flex justify-between items-start pb-6 border-b border-gray-200">
                             <div className="flex flex-col items-start w-1/2">
-                                {firm.shopDetails.logo && (
-                                    <img src={firm.shopDetails.logo} alt="Shop Logo" className="h-20 w-auto object-contain mb-3" />
-                                )}
+                                <img 
+                                    src={firm.shopDetails.logo || "/logo.svg"} 
+                                    alt="Shop Logo" 
+                                    className="h-16 w-auto object-contain mb-3" 
+                                />
                                 <h3 className="text-2xl font-bold text-black">{firm.shopDetails.name}</h3>
                                 <p className="text-gray-600 whitespace-pre-line">{firm.shopDetails.address}</p>
                                 <p className="text-gray-600">Ph: {firm.shopDetails.phone}</p>
@@ -322,7 +330,10 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                         let itemProfit = null;
                                         if (!item.isBuyback && !item.isCustom && item.purchasePrice !== undefined) {
                                             const cost = item.purchasePrice * item.quantity;
-                                            itemProfit = net - cost;
+                                            const exTaxNet = tx.priceIncludesTax && firm.financials.gstRate > 0
+                                                ? net / (1 + firm.financials.gstRate / 100)
+                                                : net;
+                                            itemProfit = exTaxNet - cost;
                                         }
 
                                         const specs = [
@@ -373,11 +384,17 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
 
                         <div className="flex justify-end mt-6">
                             <div className="w-1/2 space-y-2">
-                                <div className="flex justify-between text-gray-600"><span>Gross Subtotal</span><span>{firm.financials.currencySymbol}{itemsTotal.toFixed(2)}</span></div>
+                                <div className="flex justify-between text-gray-600">
+                                    <span>{tx.priceIncludesTax ? 'Items Total (Incl. GST)' : 'Gross Subtotal'}</span>
+                                    <span>{firm.financials.currencySymbol}{(tx.priceIncludesTax ? itemsTotal - buybackTotal : itemsTotal).toFixed(2)}</span>
+                                </div>
                                 {totalItemDiscount > 0 && (
                                     <div className="flex justify-between text-red-500 text-sm"><span>Item Discounts</span><span>- {firm.financials.currencySymbol}{totalItemDiscount.toFixed(2)}</span></div>
                                 )}
-                                <div className="flex justify-between text-black font-semibold border-t border-dashed border-gray-300 pt-1 mt-1"><span>Net Subtotal</span><span>{firm.financials.currencySymbol}{netSubtotal.toFixed(2)}</span></div>
+                                <div className="flex justify-between text-black font-semibold border-t border-dashed border-gray-300 pt-1 mt-1">
+                                    <span>{tx.priceIncludesTax ? 'Subtotal (Incl. GST)' : 'Net Subtotal'}</span>
+                                    <span>{firm.financials.currencySymbol}{netSubtotal.toFixed(2)}</span>
+                                </div>
 
                                 {tx.additionalCharges && tx.additionalCharges.amount > 0 && (
                                     <div className="flex justify-between text-gray-600 mt-2">
@@ -386,11 +403,35 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                     </div>
                                 )}
 
-                                {overallDiscountAmount > 0 && (
-                                    <div className="flex justify-between text-red-500"><span>Overall Discount</span><span>- {firm.financials.currencySymbol}{overallDiscountAmount.toFixed(2)}</span></div>
+                                {tx.clubBuybackDiscount ? (
+                                    (buybackTotal < 0 || overallDiscountAmount > 0) && (
+                                        <div className="flex justify-between text-red-500">
+                                            <span>Buyback &amp; Discount</span>
+                                            <span>- {firm.financials.currencySymbol}{(Math.abs(buybackTotal) + overallDiscountAmount).toFixed(2)}</span>
+                                        </div>
+                                    )
+                                ) : (
+                                    <>
+                                        {buybackTotal < 0 && (
+                                            <div className="flex justify-between text-green-600">
+                                                <span>Buyback Credit</span>
+                                                <span>- {firm.financials.currencySymbol}{Math.abs(buybackTotal).toFixed(2)}</span>
+                                            </div>
+                                        )}
+                                        {overallDiscountAmount > 0 && (
+                                            <div className="flex justify-between text-red-500"><span>Overall Discount</span><span>- {firm.financials.currencySymbol}{overallDiscountAmount.toFixed(2)}</span></div>
+                                        )}
+                                    </>
                                 )}
                                 {pointsValue > 0 && (
                                     <div className="flex justify-between text-blue-600"><span>Loyalty Points Redeemed ({tx.redeemedPoints})</span><span>- {firm.financials.currencySymbol}{pointsValue.toFixed(2)}</span></div>
+                                )}
+
+                                {tx.priceIncludesTax && tx.taxRegime === 'Regular' && tx.taxAmount !== 0 && (
+                                    <div className="flex justify-between text-gray-600 text-sm border-t border-dashed border-gray-300 pt-2 mt-2">
+                                        <span>Taxable Value</span>
+                                        <span>{firm.financials.currencySymbol}{(tx.total - tx.taxAmount).toFixed(2)}</span>
+                                    </div>
                                 )}
 
                                 {/* GST Breakup - Show CGST/SGST or IGST based on interstate */}
@@ -401,6 +442,7 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                         const isInterstate = sellerStateCode !== buyerStateCode;
                                         const placeOfSupplyName = INDIAN_STATES.find(s => s.code === buyerStateCode)?.name;
                                         const halfTax = tx.taxAmount / 2;
+                                        const taxPrefix = tx.priceIncludesTax ? '' : '+ ';
 
                                         return (
                                             <>
@@ -413,17 +455,17 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                                 {isInterstate ? (
                                                     <div className="flex justify-between text-gray-600">
                                                         <span>IGST ({firm.financials.gstRate}%)</span>
-                                                        <span>+ {firm.financials.currencySymbol}{tx.taxAmount.toFixed(2)}</span>
+                                                        <span>{taxPrefix}{firm.financials.currencySymbol}{tx.taxAmount.toFixed(2)}</span>
                                                     </div>
                                                 ) : (
                                                     <>
                                                         <div className="flex justify-between text-gray-600 text-sm">
                                                             <span>CGST ({firm.financials.gstRate / 2}%)</span>
-                                                            <span>+ {firm.financials.currencySymbol}{halfTax.toFixed(2)}</span>
+                                                            <span>{taxPrefix}{firm.financials.currencySymbol}{halfTax.toFixed(2)}</span>
                                                         </div>
                                                         <div className="flex justify-between text-gray-600 text-sm">
                                                             <span>SGST ({firm.financials.gstRate / 2}%)</span>
-                                                            <span>+ {firm.financials.currencySymbol}{halfTax.toFixed(2)}</span>
+                                                            <span>{taxPrefix}{firm.financials.currencySymbol}{halfTax.toFixed(2)}</span>
                                                         </div>
                                                     </>
                                                 )}

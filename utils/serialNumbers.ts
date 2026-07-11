@@ -50,7 +50,7 @@ export function validateBatterySerials(
     serials: string[],
     quantity: number,
     inventory: InventoryItem[],
-    firmId: string,
+    firmId?: string,
     options?: { requireAll?: boolean },
 ): string | null {
     const requireAll = options?.requireAll ?? true;

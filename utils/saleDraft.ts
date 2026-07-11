@@ -16,7 +16,11 @@ export interface SaleDraft {
     payments: unknown[];
     notes: string;
     wizardStep: number;
-    saleFormMode: 'quick' | 'full';
+    overallDiscount?: { type: 'percentage' | 'fixed'; value: number };
+    finalPriceOverride?: number | null;
+    finalPriceLocked?: boolean;
+    pricingMode?: 'final-drives' | 'discount-drives';
+    clubBuybackWithDiscount?: boolean;
 }
 
 export function saveSaleDraft(draft: SaleDraft) {

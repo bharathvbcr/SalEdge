@@ -195,14 +195,15 @@ const WarrantyExpiryWidget: React.FC = () => {
         }).sort((a,b) => new Date(a.warrantyEndDate).getTime() - new Date(b.warrantyEndDate).getTime()).slice(0, 5);
     }, [warrantyLogs]);
 
-    if (expiringSoon.length === 0) return null;
-
     return (
         <div className="card-section-padded h-full">
             <h3 className="text-lg font-bold text-text-primary mb-4 flex items-center gap-2">
                 <IconClock className="text-brand-red h-5 w-5" /> Expiring Soon (30 Days)
             </h3>
             <div className="space-y-3">
+                {expiringSoon.length === 0 && (
+                    <p className="text-text-muted text-center text-sm py-4">No warranties expiring soon.</p>
+                )}
                 {expiringSoon.map((log, i) => (
                     <div key={i} className="p-2 border-l-2 border-red-400 bg-red-50 dark:bg-red-900/10 rounded-r">
                         <p className="font-medium text-text-primary text-sm">{log.customerName}</p>
@@ -889,22 +890,12 @@ export const DashboardPage: React.FC<{ onNavigate?: (page: Page) => void }> = ({
                         currencySymbol={defaultFirm?.financials.currencySymbol || '₹'}
                     />
 
-                    <div className={`grid grid-cols-1 gap-4 md:gap-6 ${isAdmin ? 'lg:grid-cols-3' : ''}`}>
-                        {isAdmin && (
-                            <div className="lg:col-span-2">
-                                <SalesTrendChart data={chartData} />
-                            </div>
-                        )}
-                        <div className={isAdmin ? "lg:col-span-1" : ""}>
-                            <CategoryPieChart transactions={filteredTransactions} />
-                        </div>
-                    </div>
+                    {isAdmin && <SalesTrendChart data={chartData} />}
 
-                    {isAdmin && (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-                            <SaleCategoryPieChart transactions={filteredTransactions} />
-                        </div>
-                    )}
+                    <div className={`grid grid-cols-1 gap-4 md:gap-6 ${isAdmin ? 'lg:grid-cols-2' : ''}`}>
+                        <CategoryPieChart transactions={filteredTransactions} />
+                        {isAdmin && <SaleCategoryPieChart transactions={filteredTransactions} />}
+                    </div>
                     
                     {/* New Widgets Row */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

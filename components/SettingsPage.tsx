@@ -7,10 +7,11 @@ import { ConfirmationModal } from './ConfirmationModal.tsx';
 import { AuditLogViewer } from './AuditLogViewer.tsx';
 import { UserManagement } from './UserManagement.tsx';
 import { IconSun, IconMoon, IconX } from './icons.tsx';
-import { api, aiTestConnection } from '../utils/api.ts';
+import { api, aiTestConnection, aiOllamaModels } from '../utils/api.ts';
 import { Firm, AiSettings, ReportPeriodPreference } from '../types.ts';
 import { detectLegacyLocalStorage, readLegacyLocalStorageData, clearLegacyLocalStorage } from '../utils/localStorageMigration.ts';
 import { PageHeader } from './PageHeader.tsx';
+import { MobileConnectPanel } from './MobileConnectPanel.tsx';
 
 const SettingsSection: React.FC<{ title: string; description: string; children: React.ReactNode }> = ({ title, description, children }) => (
     <div className="card-section-padded">
@@ -145,16 +146,58 @@ export const SettingsPage: React.FC = () => {
         provider: 'gemini',
         geminiModel: 'gemini-2.0-flash',
         ollamaBaseUrl: 'http://127.0.0.1:11434',
-        ollamaVisionModel: 'llama3.2-vision',
+        ollamaVisionModel: 'auto',
+        ollamaTextModel: 'auto',
         semanticLayerEnabled: true,
         semanticLayerUrl: 'http://127.0.0.1:8090',
     };
+
+    const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+    const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
+    const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!aiSettings.enabled || aiSettings.provider !== 'ollama') {
+            setOllamaModels([]);
+            setOllamaModelsError(null);
+            return;
+        }
+
+        let cancelled = false;
+        const loadModels = async () => {
+            setOllamaModelsLoading(true);
+            setOllamaModelsError(null);
+            try {
+                const result = await aiOllamaModels({ aiSettings });
+                if (cancelled) return;
+                setOllamaModels(result.available ?? []);
+            } catch (err) {
+                if (cancelled) return;
+                setOllamaModels([]);
+                setOllamaModelsError(err instanceof Error ? err.message : 'Could not load Ollama models');
+            } finally {
+                if (!cancelled) setOllamaModelsLoading(false);
+            }
+        };
+
+        const timer = window.setTimeout(loadModels, 400);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [aiSettings.enabled, aiSettings.provider, aiSettings.ollamaBaseUrl, aiSettings.ollamaVisionModel, aiSettings.ollamaTextModel]);
 
     const updateAiSettings = (partial: Partial<AiSettings>) => {
         setPreferences(p => ({
             ...p,
             aiSettings: { ...(p.aiSettings ?? aiSettings), ...partial },
         }));
+    };
+
+    const handleAiEnabledChange = (enabled: boolean) => {
+        const nextAiSettings: AiSettings = { ...(preferences.aiSettings ?? aiSettings), enabled };
+        setPreferences(p => ({ ...p, aiSettings: nextAiSettings }));
+        updatePreferences({ aiSettings: nextAiSettings });
     };
 
     const handleSaveAiSettings = () => {
@@ -259,7 +302,12 @@ export const SettingsPage: React.FC = () => {
                     <div className="card-section">
                         <div className="p-4 border-b border-border-color">
                             <h3 className="text-lg font-bold text-text-primary">Firm Management</h3>
-                            <p className="text-sm text-text-muted">Configure details for each of your business entities.</p>
+                            <p className="text-sm text-text-muted">Configure invoice and GST details for each billing entity.</p>
+                            {config.firms.length > 1 && (
+                                <p className="text-xs text-status-blue-text mt-2 bg-status-blue-bg/40 border border-status-blue-text/20 rounded-lg px-3 py-2">
+                                    Inventory is shared — all firms draw from the same physical stock. Firm settings only affect invoices, purchases, and reports.
+                                </p>
+                            )}
                             <div className="mt-4 firm-switcher">
                                 {config.firms.map(firm => (
                                     <button 
@@ -354,6 +402,9 @@ export const SettingsPage: React.FC = () => {
                             <select value={preferences.defaultFirmId} onChange={e => setPreferences(p => ({...p, defaultFirmId: e.target.value as any}))} className="form-input">
                                 {config.firms.map(f => <option key={f.id} value={f.id}>{f.shopDetails.name}</option>)}
                             </select>
+                            {config.firms.length > 1 && (
+                                <p className="text-xs text-text-muted mt-1">Default invoice firm only — stock is shared across all firms.</p>
+                            )}
                         </FormField>
                         <FormField label="Default Dashboard View">
                             <select value={preferences.defaultDashboardView} onChange={e => setPreferences(p => ({...p, defaultDashboardView: e.target.value as ReportPeriodPreference}))} className="form-input">
@@ -429,17 +480,18 @@ export const SettingsPage: React.FC = () => {
                         <div className="flex justify-end mt-4"><button onClick={handleSavePreferences} className="btn-primary btn-sm">Save Categories</button></div>
                     </SettingsSection>
 
+                    {userRole === 'admin' && (
                     <SettingsSection title="AI Assistant" description="Configure Gemini or local Ollama for invoice OCR, dashboard insights, and business Q&A (admin-only).">
                         <FormField label="Enable AI">
-                            <div className="flex items-center gap-2 pt-2">
+                            <label className="flex items-center gap-2 pt-2 cursor-pointer">
                                 <input
                                     type="checkbox"
                                     checked={aiSettings.enabled}
-                                    onChange={e => updateAiSettings({ enabled: e.target.checked })}
+                                    onChange={e => handleAiEnabledChange(e.target.checked)}
                                     className="h-5 w-5 rounded border-border-color text-brand-red focus:ring-brand-red"
                                 />
                                 <span className="text-sm text-text-secondary">Enable AI features</span>
-                            </div>
+                            </label>
                         </FormField>
                         {aiSettings.enabled && (
                             <>
@@ -487,15 +539,41 @@ export const SettingsPage: React.FC = () => {
                                             />
                                         </FormField>
                                         <FormField label="Vision Model">
-                                            <input
-                                                type="text"
-                                                value={aiSettings.ollamaVisionModel || 'llama3.2-vision'}
+                                            <select
+                                                value={aiSettings.ollamaVisionModel || 'auto'}
                                                 onChange={e => updateAiSettings({ ollamaVisionModel: e.target.value })}
-                                                className="form-input"
-                                                placeholder="llama3.2-vision"
-                                            />
+                                                className="form-input w-auto min-w-[16rem]"
+                                                disabled={ollamaModelsLoading}
+                                            >
+                                                <option value="auto">Auto (recommended)</option>
+                                                {ollamaModels.map(model => (
+                                                    <option key={`vision-${model}`} value={model}>{model}</option>
+                                                ))}
+                                            </select>
                                             <p className="text-xs text-text-muted mt-1">
-                                                Used for invoice OCR. Chat and insights use smart caching and routing automatically when Ollama is selected.
+                                                Used for invoice OCR. Auto picks a vision-capable model if installed, otherwise your smallest model.
+                                            </p>
+                                            {ollamaModelsLoading && (
+                                                <p className="text-xs text-text-muted mt-1">Loading models from Ollama…</p>
+                                            )}
+                                            {ollamaModelsError && (
+                                                <p className="text-xs text-red-600 mt-1">{ollamaModelsError}</p>
+                                            )}
+                                        </FormField>
+                                        <FormField label="Text Model">
+                                            <select
+                                                value={aiSettings.ollamaTextModel || 'auto'}
+                                                onChange={e => updateAiSettings({ ollamaTextModel: e.target.value })}
+                                                className="form-input w-auto min-w-[16rem]"
+                                                disabled={ollamaModelsLoading}
+                                            >
+                                                <option value="auto">Auto (recommended)</option>
+                                                {ollamaModels.map(model => (
+                                                    <option key={`text-${model}`} value={model}>{model}</option>
+                                                ))}
+                                            </select>
+                                            <p className="text-xs text-text-muted mt-1">
+                                                Used for chat and insights when smart caching falls back to direct Ollama. Auto picks the smallest non-vision model.
                                             </p>
                                         </FormField>
                                     </>
@@ -514,6 +592,7 @@ export const SettingsPage: React.FC = () => {
                             </div>
                         )}
                     </SettingsSection>
+                    )}
 
                     <SettingsSection title="E-Invoice / GSP Integration" description="Configure GSP credentials for live IRN generation (optional).">
                         <FormField label="GSP API Key">
@@ -605,6 +684,17 @@ export const SettingsPage: React.FC = () => {
                              <button onClick={() => setResetModalOpen(true)} className="btn-danger w-full">Reset Application</button>
                          </div>
                     </SettingsSection>
+
+                    {userRole === 'admin' && (
+                        <div className="hidden md:block">
+                            <SettingsSection
+                                title="Mobile Companion"
+                                description="Pair a phone on the same Wi‑Fi for barcode scanning, stock counts, and invoice photos."
+                            >
+                                <MobileConnectPanel />
+                            </SettingsSection>
+                        </div>
+                    )}
 
                     {userRole === 'admin' && (
                         <SettingsSection title="User Management" description="Create and manage staff accounts.">

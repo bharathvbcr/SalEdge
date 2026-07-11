@@ -7,6 +7,7 @@ export interface ResolvedAiSettings {
     geminiModel: string;
     ollamaBaseUrl: string;
     ollamaVisionModel: string;
+    ollamaTextModel: string;
     semanticLayerEnabled: boolean;
     semanticLayerUrl: string;
 }

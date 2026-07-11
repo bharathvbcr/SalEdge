@@ -47,6 +47,8 @@ export interface CustomerData {
     tierDiscountPercent?: number;
 }
 
+export type PricingMode = 'final-drives' | 'discount-drives';
+
 export type SaleTotals = {
     itemsTotal: number;
     totalItemDiscount: number;
@@ -57,6 +59,12 @@ export type SaleTotals = {
     total: number;
     estimatedProfit: number;
     buybackTotal: number;
+    taxableAmount: number;
+    computedFinalBeforeRound: number;
+    combinedConcession: number;
+    isFinalPriceOverridden: boolean;
+    pricingMode: PricingMode;
+    clubBuybackWithDiscount: boolean;
 };
 
 export type InventorySuggestion = {
@@ -69,4 +77,3 @@ export type InventorySuggestion = {
 };
 
 export type WizardStep = 0 | 1 | 2;
-export type SaleFormMode = 'quick' | 'full';

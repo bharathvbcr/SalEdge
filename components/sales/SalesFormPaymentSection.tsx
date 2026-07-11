@@ -1,6 +1,6 @@
 import React from 'react';
 import { IconPlus, IconTrash, IconAlertTriangle } from '../icons.tsx';
-import { Payment, CustomerData, SaleTotals } from './types.ts';
+import { Payment, CustomerData, SaleTotals, PricingMode } from './types.ts';
 import { FormField } from '../FormField.tsx';
 
 interface LoyaltySettings {
@@ -35,6 +35,16 @@ interface SalesFormPaymentSectionProps {
     viewMode: boolean;
     isReturnMode: boolean;
     paymentDueDateError?: string;
+    gstRate: number;
+    pricingMode: PricingMode;
+    finalPriceLocked: boolean;
+    finalPriceOverride: number | null;
+    onFinalPriceChange: (value: number) => void;
+    onRoundFinal: () => void;
+    onResetFinal: () => void;
+    onEditDiscountManually: () => void;
+    clubBuybackWithDiscount: boolean;
+    setClubBuybackWithDiscount: (v: boolean) => void;
 }
 
 export const SalesFormPaymentSection: React.FC<SalesFormPaymentSectionProps> = ({
@@ -43,8 +53,22 @@ export const SalesFormPaymentSection: React.FC<SalesFormPaymentSectionProps> = (
     payments, onAddPayment, onRemovePayment, onUpdatePayment, onSetFullPayment,
     paymentDueDate, setPaymentDueDate, amountDue, totalPaid, totals, additionalCharges,
     setAdditionalCharges, currencySymbol, viewMode, isReturnMode, paymentDueDateError,
+    gstRate, pricingMode, finalPriceLocked, finalPriceOverride,
+    onFinalPriceChange, onRoundFinal, onResetFinal, onEditDiscountManually,
+    clubBuybackWithDiscount, setClubBuybackWithDiscount,
 }) => {
-    const { itemsTotal, buybackTotal, totalItemDiscount, subtotal, overallDiscountAmount, pointsDiscountValue, taxAmount, total, estimatedProfit } = totals;
+    const {
+        itemsTotal, buybackTotal, totalItemDiscount, subtotal, overallDiscountAmount,
+        pointsDiscountValue, taxAmount, total, estimatedProfit, taxableAmount, combinedConcession,
+    } = totals;
+
+    const regularItemsTotal = itemsTotal - buybackTotal;
+    const baseBeforeDisc = subtotal - pointsDiscountValue;
+
+    const finalBelowBaseWarning = finalPriceLocked && finalPriceOverride !== null
+        && finalPriceOverride > baseBeforeDisc + 0.01;
+
+    const displayFinalPrice = finalPriceOverride ?? total;
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 pt-4 border-t border-border-color">
@@ -52,10 +76,33 @@ export const SalesFormPaymentSection: React.FC<SalesFormPaymentSectionProps> = (
                 <div className="grid grid-cols-3 gap-2 items-center">
                     <label className="font-medium text-text-secondary col-span-1">Overall Discount:</label>
                     <div className="col-span-2 flex gap-2">
-                        <input disabled={isReturnMode} type="number" value={overallDiscount.value} min="0" onChange={e => setOverallDiscount(d => ({ ...d, value: parseFloat(e.target.value) || 0 }))} className="form-input w-2/3" />
-                        <select disabled={isReturnMode} value={overallDiscount.type} onChange={e => setOverallDiscount(d => ({ ...d, type: e.target.value as 'percentage' | 'fixed' }))} className="form-input w-1/3"><option value="percentage">%</option><option value="fixed">{currencySymbol}</option></select>
+                        <input
+                            disabled={isReturnMode || (finalPriceLocked && !viewMode)}
+                            type="number"
+                            value={overallDiscount.value}
+                            min="0"
+                            onChange={e => setOverallDiscount(d => ({ ...d, value: parseFloat(e.target.value) || 0 }))}
+                            className="form-input w-2/3"
+                        />
+                        <select
+                            disabled={isReturnMode || (finalPriceLocked && !viewMode)}
+                            value={overallDiscount.type}
+                            onChange={e => setOverallDiscount(d => ({ ...d, type: e.target.value as 'percentage' | 'fixed' }))}
+                            className="form-input w-1/3"
+                        >
+                            <option value="percentage">%</option>
+                            <option value="fixed">{currencySymbol}</option>
+                        </select>
                     </div>
                 </div>
+                {finalPriceLocked && !viewMode && (
+                    <p className="text-xs text-text-muted">
+                        Calculated from Final Price.{' '}
+                        <button type="button" onClick={onEditDiscountManually} className="btn-link-danger text-xs font-semibold">
+                            Edit discount manually
+                        </button>
+                    </p>
+                )}
 
                 {loyaltySettings.enabled && selectedCustomerData && !isReturnMode && (
                     <div className="grid grid-cols-3 gap-2 items-center">
@@ -137,12 +184,27 @@ export const SalesFormPaymentSection: React.FC<SalesFormPaymentSectionProps> = (
                     </FormField>
                 )}
             </div>
+
             <div className="space-y-2 text-right font-medium text-text-secondary pr-2">
-                <div className="flex justify-between items-center"><span className="text-text-muted">Items Total (Gross):</span><span className={isReturnMode ? 'text-negative' : ''}>{currencySymbol}{itemsTotal.toFixed(2)}</span></div>
-                {buybackTotal < 0 && (
-                    <div className="flex justify-between items-center"><span className="text-text-muted">Buyback Credit:</span><span className="text-positive">- {currencySymbol}{Math.abs(buybackTotal).toFixed(2)}</span></div>
-                )}
-                <div className="flex justify-between items-center"><span className="text-text-muted">Item Discounts:</span><span className="text-negative">- {currencySymbol}{totalItemDiscount.toFixed(2)}</span></div>
+                <label className="flex items-center justify-end gap-2 text-sm text-text-muted cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={clubBuybackWithDiscount}
+                        onChange={e => setClubBuybackWithDiscount(e.target.checked)}
+                        disabled={viewMode}
+                        className="rounded border-border-color"
+                    />
+                    Club buyback &amp; discount
+                </label>
+
+                <div className="flex justify-between items-center">
+                    <span className="text-text-muted">Items Total (Incl. GST):</span>
+                    <span className={isReturnMode ? 'text-negative' : ''}>{currencySymbol}{regularItemsTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                    <span className="text-text-muted">Item Discounts:</span>
+                    <span className="text-negative">- {currencySymbol}{totalItemDiscount.toFixed(2)}</span>
+                </div>
                 <div className="flex justify-between items-center py-2 border-y border-border-color border-dashed">
                     <span className="text-text-muted text-sm flex items-center gap-2">Installation / Service Charge:</span>
                     <div className="flex items-center justify-end gap-2 w-1/3">
@@ -150,15 +212,93 @@ export const SalesFormPaymentSection: React.FC<SalesFormPaymentSectionProps> = (
                         <input disabled={viewMode} type="number" value={additionalCharges.amount} onChange={e => setAdditionalCharges(prev => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))} className="form-input h-8 text-right py-1" />
                     </div>
                 </div>
-                <div className="flex justify-between items-center font-bold pt-1"><span className="text-text-muted">Subtotal (Net):</span><span className={isReturnMode ? 'text-negative' : ''}>{currencySymbol}{subtotal.toFixed(2)}</span></div>
-                <div className="flex justify-between items-center"><span className="text-text-muted">Overall Discount:</span><span className="text-negative">- {currencySymbol}{overallDiscountAmount.toFixed(2)}</span></div>
+
+                {clubBuybackWithDiscount ? (
+                    (buybackTotal < 0 || overallDiscountAmount > 0) && (
+                        <div className="flex justify-between items-center font-bold">
+                            <span className="text-text-muted">Buyback &amp; Discount:</span>
+                            <span className="text-negative">- {currencySymbol}{combinedConcession.toFixed(2)}</span>
+                        </div>
+                    )
+                ) : (
+                    <>
+                        {buybackTotal < 0 && (
+                            <div className="flex justify-between items-center">
+                                <span className="text-text-muted">Buyback Credit:</span>
+                                <span className="text-positive">- {currencySymbol}{Math.abs(buybackTotal).toFixed(2)}</span>
+                            </div>
+                        )}
+                        {overallDiscountAmount > 0 && (
+                            <div className="flex justify-between items-center">
+                                <span className="text-text-muted">
+                                    Overall Discount:
+                                    {pricingMode === 'final-drives' && finalPriceLocked && (
+                                        <span className="block text-[10px] font-normal italic">Calculated from Final Price</span>
+                                    )}
+                                </span>
+                                <span className="text-negative">- {currencySymbol}{overallDiscountAmount.toFixed(2)}</span>
+                            </div>
+                        )}
+                    </>
+                )}
+
                 {pointsDiscountValue > 0 && !isReturnMode && (
                     <div className="flex justify-between items-center text-info">
                         <span className="flex items-center gap-1 justify-end">Points Redeemed ({pointsToRedeem})</span>
                         <span>- {currencySymbol}{pointsDiscountValue.toFixed(2)}</span>
                     </div>
                 )}
-                <div className="flex justify-between items-center"><span className="text-text-muted">Tax (GST):</span><span>+ {currencySymbol}{taxAmount.toFixed(2)}</span></div>
+
+                <div className="pt-2 border-t border-border-color">
+                    <div className="flex justify-between items-center font-bold">
+                        <span className="text-text-primary">Final Price (Incl. GST):</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-text-muted">{currencySymbol}</span>
+                            <input
+                                disabled={viewMode}
+                                type="number"
+                                value={displayFinalPrice}
+                                onChange={e => onFinalPriceChange(parseFloat(e.target.value) || 0)}
+                                className="form-input h-9 w-32 text-right font-bold text-lg"
+                            />
+                        </div>
+                    </div>
+                    {!viewMode && (
+                        <div className="flex justify-end gap-2 mt-1">
+                            <button type="button" onClick={onRoundFinal} className="text-xs badge badge-blue px-2 py-0.5 hover:opacity-80">Round</button>
+                            {finalPriceLocked && (
+                                <button type="button" onClick={onResetFinal} className="text-xs text-text-muted hover:text-text-primary underline">Reset</button>
+                            )}
+                        </div>
+                    )}
+                    {finalBelowBaseWarning && (
+                        <p className="text-xs text-negative mt-1 flex items-center justify-end gap-1">
+                            <IconAlertTriangle className="h-3 w-3" />
+                            Final price exceeds cart total
+                        </p>
+                    )}
+                </div>
+
+                <div className="pt-2 mt-2 border-t border-dashed border-border-color space-y-1">
+                    <p className="text-[10px] uppercase tracking-wide text-text-muted text-right mb-1">Tax breakup (from Final Price)</p>
+                    <div className="flex justify-between items-center text-sm">
+                        <span className="text-text-muted">Taxable Value:</span>
+                        <span>{currencySymbol}{taxableAmount.toFixed(2)}</span>
+                    </div>
+                    {taxRegime === 'Regular' && gstRate > 0 && (
+                        <div className="flex justify-between items-center text-sm">
+                            <span className="text-text-muted">GST ({gstRate}%):</span>
+                            <span>{currencySymbol}{taxAmount.toFixed(2)}</span>
+                        </div>
+                    )}
+                    {taxRegime === 'Composition' && (
+                        <div className="flex justify-between items-center text-sm">
+                            <span className="text-text-muted">Tax (Composition):</span>
+                            <span>{currencySymbol}0.00</span>
+                        </div>
+                    )}
+                </div>
+
                 <div className={`flex justify-between items-center text-xl font-bold border-t-2 border-text-primary pt-2 mt-2 ${isReturnMode ? 'text-negative' : 'text-text-primary'}`}>
                     <span>{isReturnMode ? 'Refund Total:' : 'Invoice Total:'}</span>
                     <span>{currencySymbol}{total.toFixed(2)}</span>
