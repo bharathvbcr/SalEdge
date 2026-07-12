@@ -120,8 +120,6 @@ Client → Embed → Cache Lookup → Router → Compressor → LLM → Async Ca
                 ↳ cache hit → return immediately
 ```
 
-Threshold auto-tuning pseudocode: `python -c "from semantic_layer.threshold import ThresholdTuner; print(ThresholdTuner.pseudocode())"`
-
 Minimal standalone demo: `python semantic_layer/examples/minimal_pipeline.py`
 
 ## Package Layout

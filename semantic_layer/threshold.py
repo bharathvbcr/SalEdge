@@ -127,37 +127,3 @@ class ThresholdTuner:
                 fpr_hat,
                 hr_hat,
             )
-
-    @staticmethod
-    def pseudocode() -> str:
-        """Reference pseudocode for threshold auto-tuning (documented in README)."""
-        return """
-PSEUDOCODE: Adaptive Cosine Threshold Auto-Tuning
-──────────────────────────────────────────────────
-INPUT:  τ (base threshold), feedback window W, targets (FPR*, HR*)
-OUTPUT: τ_eff per query
-
-ON each cache lookup(query_embedding):
-    z_norm ← OOD_score(query_embedding)
-    τ_eff  ← clip(τ + γ·max(0, z_norm - δ), τ_min, τ_max)
-    (sim, entry) ← top1_cosine_search(index, query_embedding)
-
-    IF sim ≥ τ_eff AND entry NOT expired:
-        RETURN cache_hit(entry)
-    ELSE:
-        RETURN cache_miss → fall through to router/LLM
-
-ON cache_hit_feedback(similarity, was_valid):
-    APPEND (similarity, was_valid) to W
-    IF |W| < MIN_SAMPLES: RETURN
-
-    FPR_hat ← count(valid=false in W) / |W|
-    HR_hat  ← cache_hits / total_queries
-
-    IF FPR_hat > FPR*:
-        τ ← τ + η · (FPR_hat - FPR*)
-    ELIF HR_hat < HR* AND FPR_hat < FPR*/2:
-        τ ← τ - η · (HR* - HR_hat)
-
-    τ ← clip(τ, τ_min, τ_max)
-"""

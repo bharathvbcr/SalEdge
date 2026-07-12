@@ -9,6 +9,7 @@ import { PageHeader } from './PageHeader.tsx';
 import { EmptyState } from './EmptyState.tsx';
 import { useConfig } from '../context/ConfigContext.tsx';
 import { useToast } from '../context/ToastContext.tsx';
+import { DEFAULT_BATTERY_HSN } from '../indianGST.ts';
 import {
     computeReceivablesAging,
     computePayablesAging,
@@ -359,7 +360,7 @@ export const ReportsPage: React.FC = () => {
 
                 // Try to find HSN from item or product type
                 const productType = productTypes.find(pt => `${pt.brandName} ${pt.name}` === item.name);
-                const hsn = item.hsnCode || productType?.hsnCode || '8507'; // Default to battery HSN
+                const hsn = item.hsnCode || productType?.hsnCode || DEFAULT_BATTERY_HSN;
 
                 if (!hsnSummary[hsn]) {
                     hsnSummary[hsn] = {

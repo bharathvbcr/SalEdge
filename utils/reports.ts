@@ -1,4 +1,5 @@
 import { Transaction, Purchase, Expense, InventoryItem, InventoryLog, ProductType } from '../types.ts';
+import { DEFAULT_BATTERY_HSN, calculateGSTSplit } from '../indianGST.ts';
 
 export type AgingBucket = {
     count: number;
@@ -127,7 +128,7 @@ export function computeHsnSummary(
                 if (item.isBuyback) return;
 
                 const productType = productTypes.find(pt => `${pt.brandName} ${pt.name}` === item.name);
-                const hsn = item.hsnCode || productType?.hsnCode || '8507';
+                const hsn = item.hsnCode || productType?.hsnCode || DEFAULT_BATTERY_HSN;
                 const gstRate = item.gstRate ?? defaultGstRate;
 
                 if (!hsnMap[hsn]) {
@@ -142,9 +143,10 @@ export function computeHsnSummary(
                 const taxableNet = t.priceIncludesTax
                     ? itemNet / (1 + gstRate / 100)
                     : itemNet;
-                const cgst = item.cgstAmount ?? (t.isInterstate ? 0 : taxableNet * (gstRate / 200));
-                const sgst = item.sgstAmount ?? (t.isInterstate ? 0 : taxableNet * (gstRate / 200));
-                const igst = item.igstAmount ?? (t.isInterstate ? taxableNet * (gstRate / 100) : 0);
+                const split = calculateGSTSplit(taxableNet, gstRate, !!t.isInterstate);
+                const cgst = item.cgstAmount ?? split.cgst;
+                const sgst = item.sgstAmount ?? split.sgst;
+                const igst = item.igstAmount ?? split.igst;
 
                 hsnMap[hsn].qty += item.quantity;
                 hsnMap[hsn].taxableValue += taxableNet;

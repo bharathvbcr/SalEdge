@@ -93,10 +93,6 @@ export const ModalHeader: React.FC<ModalHeaderProps & { className?: string }> = 
     </div>
 );
 
-export const ModalBody: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
-    <div className={`p-4 md:p-5 overflow-y-auto ${className}`}>{children}</div>
-);
-
 export const ModalFooter: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
     <div className={`flex flex-wrap justify-between items-center gap-3 p-4 border-t border-border-color bg-bg-tertiary/50 rounded-b-xl ${className}`}>
         {children}

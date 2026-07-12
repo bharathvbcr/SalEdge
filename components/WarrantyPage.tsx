@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { useAppData } from '../context/AppDataContext.tsx';
 import { EmptyState } from './EmptyState.tsx';
 import { IconShieldCheck } from './icons.tsx';
-import { getWarrantyStatus } from '../utils/warrantyLookup.ts';
+import { getWarrantyStatus, searchWarrantyLogs } from '../utils/warrantyLookup.ts';
 import { PageHeader } from './PageHeader.tsx';
 import { SearchInput } from './SearchInput.tsx';
 import { consumeWarrantySearchRequest } from '../utils/pageActions.ts';
@@ -23,24 +23,13 @@ export const WarrantyPage: React.FC = () => {
     usePageIntent(applyWarrantySearchIntent);
 
     const filteredLogs = useMemo(() => {
-        const baseLogs = warrantyLogs.sort((a,b) => new Date(b.saleDate).getTime() - new Date(a.saleDate).getTime());
-        let logs = baseLogs;
+        let logs = searchWarrantyLogs(searchQuery, warrantyLogs);
 
         if (statusFilter !== 'all') {
             logs = logs.filter(log => getWarrantyStatus(log).phase === statusFilter);
         }
 
-        if (!searchQuery) return logs;
-        
-        const lowerQuery = searchQuery.toLowerCase();
-        return logs.filter(log =>
-            log.serialNumber.toLowerCase().includes(lowerQuery) ||
-            log.customerName.toLowerCase().includes(lowerQuery) ||
-            log.customerPhone.includes(lowerQuery) ||
-            (log.saleCategory && log.saleCategory.toLowerCase().includes(lowerQuery)) ||
-            (log.vehicleNumber && log.vehicleNumber.toLowerCase().includes(lowerQuery)) ||
-            (log.vehicleModel && log.vehicleModel.toLowerCase().includes(lowerQuery))
-        );
+        return logs;
     }, [warrantyLogs, searchQuery, statusFilter]);
 
     const statusFilters: { id: WarrantyStatusFilter; label: string }[] = [

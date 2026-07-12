@@ -39,26 +39,6 @@ class OllamaBackend(BaseInferenceBackend):
         resp.raise_for_status()
         return resp.json()["response"]
 
-    def chat(
-        self,
-        model: str,
-        messages: list[dict[str, str]],
-        max_tokens: int = 1024,
-        temperature: float = 0.5,
-    ) -> str:
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "options": {
-                "num_predict": max_tokens,
-                "temperature": temperature,
-            },
-        }
-        resp = self._client.post(f"{self.base_url}/api/chat", json=payload)
-        resp.raise_for_status()
-        return resp.json()["message"]["content"]
-
     def health_check(self) -> bool:
         try:
             resp = self._client.get(f"{self.base_url}/api/tags")

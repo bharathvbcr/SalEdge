@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { LOYALTY_POINTS_EARN_RATE, LOYALTY_POINT_VALUE } from '../constants.ts';
 import { InventoryItem, Transaction, ProductType } from '../types.ts';
 import { IconX, IconPrint } from './icons.tsx';
 import { useConfig } from '../context/ConfigContext.tsx';
@@ -69,7 +70,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
         [config.firms, selectedFirmId, defaultFirm]
     );
     const loyaltySettings = config.preferences.loyaltyProgram ?? {
-        enabled: false, earnRate: 100, redemptionValue: 1,
+        enabled: false, earnRate: LOYALTY_POINTS_EARN_RATE, redemptionValue: LOYALTY_POINT_VALUE,
         tiers: { silver: 0, gold: 20000, platinum: 50000 },
         tierDiscounts: { silver: 0, gold: 2, platinum: 5 },
     };

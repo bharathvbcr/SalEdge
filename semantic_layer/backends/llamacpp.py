@@ -75,29 +75,6 @@ class LlamaCppBackend(BaseInferenceBackend):
             return ""
         return choices[0].get("text", "")
 
-    def chat(
-        self,
-        model: str,
-        messages: list[dict[str, str]],
-        max_tokens: int = 1024,
-        temperature: float = 0.5,
-    ) -> str:
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": False,
-        }
-        resp = self._client.post(f"{self.base_url}/v1/chat/completions", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        choices = data.get("choices", [])
-        if not choices:
-            return ""
-        message = choices[0].get("message", {})
-        return message.get("content", "")
-
     def health_check(self) -> bool:
         try:
             resp = self._client.get(f"{self.base_url}/health")

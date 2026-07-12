@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useCallback, ReactNode } from 'react';
 import useApiStorage from '../hooks/useApiStorage.tsx';
 import { AppConfig, Firm, AppPreferences } from '../types.ts';
-import { DEFAULT_SALE_CATEGORIES } from '../constants.ts';
+import { DEFAULT_SALE_CATEGORIES, LOYALTY_POINTS_EARN_RATE, LOYALTY_POINT_VALUE } from '../constants.ts';
 
 export const INITIAL_CONFIG: AppConfig = {
     firms: [
@@ -46,8 +46,8 @@ export const INITIAL_CONFIG: AppConfig = {
         defaultFirmId: 'FIRM001',
         loyaltyProgram: {
             enabled: true,
-            earnRate: 100, // Spend 100 to get 1 point
-            redemptionValue: 1, // 1 point = 1 currency unit
+            earnRate: LOYALTY_POINTS_EARN_RATE,
+            redemptionValue: LOYALTY_POINT_VALUE,
             tiers: {
                 silver: 0,
                 gold: 20000,

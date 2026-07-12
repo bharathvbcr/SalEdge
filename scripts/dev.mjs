@@ -27,6 +27,7 @@ function loadEnvFile() {
 
 loadEnvFile();
 
+// Keep in sync with server/portUtils.ts
 const PREFERRED_API = 3001;
 const PREFERRED_FRONTEND = 3000;
 const PORT_SCAN_MAX = 30;

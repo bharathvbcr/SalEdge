@@ -3,6 +3,7 @@ import fs from 'fs';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import basicSsl from '@vitejs/plugin-basic-ssl';
+import { PREFERRED_API_PORT, PREFERRED_FRONTEND_PORT } from './server/portUtils.ts';
 
 const host = process.env.TAURI_DEV_HOST;
 const RUNTIME_FILE = path.resolve(__dirname, '.bsms-dev/runtime.json');
@@ -45,12 +46,12 @@ function resolveApiProxyTarget(): string {
     if (fromEnv) return `http://127.0.0.1:${fromEnv}`;
     const fromRuntime = readRuntime().apiPort;
     if (fromRuntime) return `http://127.0.0.1:${fromRuntime}`;
-    return 'http://127.0.0.1:3001';
+    return `http://127.0.0.1:${PREFERRED_API_PORT}`;
 }
 
 export default defineConfig(({ command }) => {
   const testLoginEnabled = command === 'serve' || process.env.VITE_ENABLE_TEST_LOGIN === 'true';
-  const preferredFrontendPort = Number(process.env.BSMS_FRONTEND_PORT) || readRuntime().frontendPort || 3000;
+  const preferredFrontendPort = Number(process.env.BSMS_FRONTEND_PORT) || readRuntime().frontendPort || PREFERRED_FRONTEND_PORT;
 
   return {
       clearScreen: false,

@@ -7,7 +7,7 @@ import { ConfirmationModal } from './ConfirmationModal.tsx';
 import { AuditLogViewer } from './AuditLogViewer.tsx';
 import { UserManagement } from './UserManagement.tsx';
 import { IconSun, IconMoon, IconX } from './icons.tsx';
-import { api, aiTestConnection, aiOllamaModels } from '../utils/api.ts';
+import { api, aiTestConnection, aiOllamaModels, aiSemanticStatus } from '../utils/api.ts';
 import { Firm, AiSettings, ReportPeriodPreference } from '../types.ts';
 import { detectLegacyLocalStorage, readLegacyLocalStorageData, clearLegacyLocalStorage } from '../utils/localStorageMigration.ts';
 import { PageHeader } from './PageHeader.tsx';
@@ -155,11 +155,20 @@ export const SettingsPage: React.FC = () => {
     const [ollamaModels, setOllamaModels] = useState<string[]>([]);
     const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
     const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null);
+    const [semanticStatus, setSemanticStatus] = useState<{
+        enabled: boolean;
+        available: boolean;
+        url: string;
+        message: string;
+        latencyMs?: number;
+    } | null>(null);
+    const [semanticStatusLoading, setSemanticStatusLoading] = useState(false);
 
     useEffect(() => {
         if (!aiSettings.enabled || aiSettings.provider !== 'ollama') {
             setOllamaModels([]);
             setOllamaModelsError(null);
+            setSemanticStatus(null);
             return;
         }
 
@@ -180,12 +189,34 @@ export const SettingsPage: React.FC = () => {
             }
         };
 
-        const timer = window.setTimeout(loadModels, 400);
+        const loadSemanticStatus = async () => {
+            setSemanticStatusLoading(true);
+            try {
+                const result = await aiSemanticStatus({ aiSettings });
+                if (!cancelled) setSemanticStatus(result);
+            } catch (err) {
+                if (!cancelled) {
+                    setSemanticStatus({
+                        enabled: !!aiSettings.semanticLayerEnabled,
+                        available: false,
+                        url: aiSettings.semanticLayerUrl || '',
+                        message: err instanceof Error ? err.message : 'Status check failed',
+                    });
+                }
+            } finally {
+                if (!cancelled) setSemanticStatusLoading(false);
+            }
+        };
+
+        const timer = window.setTimeout(() => {
+            loadModels();
+            loadSemanticStatus();
+        }, 400);
         return () => {
             cancelled = true;
             window.clearTimeout(timer);
         };
-    }, [aiSettings.enabled, aiSettings.provider, aiSettings.ollamaBaseUrl, aiSettings.ollamaVisionModel, aiSettings.ollamaTextModel]);
+    }, [aiSettings.enabled, aiSettings.provider, aiSettings.ollamaBaseUrl, aiSettings.ollamaVisionModel, aiSettings.ollamaTextModel, aiSettings.semanticLayerEnabled, aiSettings.semanticLayerUrl]);
 
     const updateAiSettings = (partial: Partial<AiSettings>) => {
         setPreferences(p => ({
@@ -575,6 +606,29 @@ export const SettingsPage: React.FC = () => {
                                             <p className="text-xs text-text-muted mt-1">
                                                 Used for chat and insights when smart caching falls back to direct Ollama. Auto picks the smallest non-vision model.
                                             </p>
+                                        </FormField>
+                                        <FormField label="Semantic Layer">
+                                            <div className="space-y-2">
+                                                <label className="inline-flex items-center gap-2 text-sm text-text-secondary">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={aiSettings.semanticLayerEnabled !== false}
+                                                        onChange={e => updateAiSettings({ semanticLayerEnabled: e.target.checked })}
+                                                        className="h-4 w-4 rounded border-border-color text-brand-red focus:ring-brand-red"
+                                                    />
+                                                    Enable smart cache / RAG
+                                                </label>
+                                                {semanticStatusLoading ? (
+                                                    <p className="text-xs text-text-muted">Checking semantic layer…</p>
+                                                ) : semanticStatus ? (
+                                                    <p className={`text-xs ${semanticStatus.available ? 'text-green-600' : 'text-text-muted'}`}>
+                                                        {semanticStatus.available ? 'Available' : 'Unavailable'}
+                                                        {semanticStatus.url ? ` · ${semanticStatus.url}` : ''}
+                                                        {semanticStatus.latencyMs != null ? ` · ${semanticStatus.latencyMs}ms` : ''}
+                                                        {semanticStatus.message ? ` — ${semanticStatus.message}` : ''}
+                                                    </p>
+                                                ) : null}
+                                            </div>
                                         </FormField>
                                     </>
                                 )}

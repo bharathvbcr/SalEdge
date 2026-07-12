@@ -134,11 +134,6 @@ export async function fetchLanMobileUrls(): Promise<LanMobileUrlsResult> {
     };
 }
 
-export async function fetchLanMobileUrl(): Promise<string | null> {
-    const result = await fetchLanMobileUrls();
-    return result.urls[0] ?? null;
-}
-
 export function clearMobilePageQuery(): void {
     const url = new URL(window.location.href);
     if (!url.searchParams.has('page')) return;

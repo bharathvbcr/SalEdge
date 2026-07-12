@@ -55,6 +55,21 @@ export const COMMON_HSN_CODES: { code: string; description: string; gstRate: num
     { code: '9987', description: 'Other support services', gstRate: 18 },
 ];
 
+/** Default HSN when a line item / product has none set (lead-acid batteries). */
+export const DEFAULT_BATTERY_HSN = COMMON_HSN_CODES[0].code;
+
+/** Split an already-computed tax amount into CGST/SGST or IGST. */
+export function splitTaxAmount(
+    taxAmount: number,
+    isInterstate: boolean
+): { cgst: number; sgst: number; igst: number; total: number } {
+    if (isInterstate) {
+        return { cgst: 0, sgst: 0, igst: taxAmount, total: taxAmount };
+    }
+    const halfTax = taxAmount / 2;
+    return { cgst: halfTax, sgst: halfTax, igst: 0, total: taxAmount };
+}
+
 // Utility: Convert number to Indian words (Lakhs/Crores)
 export function numberToIndianWords(num: number): string {
     if (num === 0) return 'Zero Rupees Only';

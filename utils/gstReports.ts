@@ -1,5 +1,6 @@
 import { Transaction, Purchase, ProductType } from '../types.ts';
 import { computeHsnSummary } from './reports.ts';
+import { splitTaxAmount } from '../indianGST.ts';
 
 export type Gstr3bSummary = {
     outwardTaxable: number;
@@ -39,8 +40,9 @@ export function computeGstr3b(
         if (t.isInterstate) {
             outwardIgst += t.taxAmount;
         } else {
-            outwardCgst += t.taxAmount / 2;
-            outwardSgst += t.taxAmount / 2;
+            const split = splitTaxAmount(t.taxAmount, false);
+            outwardCgst += split.cgst;
+            outwardSgst += split.sgst;
         }
     });
 
@@ -55,8 +57,8 @@ export function computeGstr3b(
         const taxable = p.totalAmount / (1 + rate);
         const tax = p.totalAmount - taxable;
         inputTaxCredit += tax;
-        itcCgst += tax / 2;
-        itcSgst += tax / 2;
+        itcCgst += splitTaxAmount(tax, false).cgst;
+        itcSgst += splitTaxAmount(tax, false).sgst;
     });
 
     const hsn = computeHsnSummary(sales, productTypes, gstRate);

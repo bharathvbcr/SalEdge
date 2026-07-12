@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { PREFERRED_FRONTEND_PORT } from './portUtils.js';
 
 export interface DevRuntime {
     apiPort: number;
@@ -39,6 +40,6 @@ export function patchDevRuntime(partial: Partial<DevRuntime>): DevRuntime | null
     });
 }
 
-export function getDevFrontendPort(fallback = 3000): number {
+export function getDevFrontendPort(fallback = PREFERRED_FRONTEND_PORT): number {
     return readDevRuntime()?.frontendPort ?? fallback;
 }

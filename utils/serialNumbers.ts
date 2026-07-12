@@ -98,11 +98,6 @@ export function isSerialTrackedItem(item: Pick<InventoryItem, 'serialNumber'>): 
     return !!normalizeSerial(item.serialNumber);
 }
 
-export function takeSerialsFromPool(pool: string[], count: number): { assigned: string[]; remaining: string[] } {
-    const assigned = pool.slice(0, count);
-    return { assigned, remaining: pool.slice(count) };
-}
-
 export function fillSerialsFromPool(
     slots: string[],
     pool: string[],

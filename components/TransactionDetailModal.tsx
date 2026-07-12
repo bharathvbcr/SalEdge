@@ -8,7 +8,7 @@ import { useToast } from '../context/ToastContext.tsx';
 import { useAuth } from '../context/AuthContext.tsx';
 import { useMasterData } from '../context/MasterDataContext.tsx';
 import { useAppData } from '../context/AppDataContext.tsx';
-import { INDIAN_STATES, isInterstateTransaction } from '../indianGST.ts';
+import { INDIAN_STATES, isInterstateTransaction, numberToIndianWords, splitTaxAmount } from '../indianGST.ts';
 import { generateEInvoice, generateEWayBill, requiresEInvoice, requiresEWayBill } from '../utils/eInvoiceService.ts';
 import { Modal, ModalHeader, ModalFooter } from './Modal.tsx';
 
@@ -19,25 +19,6 @@ interface TransactionDetailModalProps {
     onDelete?: (transaction: Transaction) => void;
     autoPrint?: boolean;
 }
-
-// Utility to convert number to Indian words
-const numberToWords = (num: number): string => {
-    const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
-    const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-
-    if ((num = num.toString() as any).length > 9) return 'Overflow';
-    const n = ('000000000' + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-    if (!n) return '';
-
-    let str = '';
-    str += (Number(n[1]) !== 0) ? (a[Number(n[1])] || b[n[1][0] as any] + ' ' + a[n[1][1] as any]) + 'Crore ' : '';
-    str += (Number(n[2]) !== 0) ? (a[Number(n[2])] || b[n[2][0] as any] + ' ' + a[n[2][1] as any]) + 'Lakh ' : '';
-    str += (Number(n[3]) !== 0) ? (a[Number(n[3])] || b[n[3][0] as any] + ' ' + a[n[3][1] as any]) + 'Thousand ' : '';
-    str += (Number(n[4]) !== 0) ? (a[Number(n[4])] || b[n[4][0] as any] + ' ' + a[n[4][1] as any]) + 'Hundred ' : '';
-    str += (Number(n[5]) !== 0) ? ((str !== '') ? 'and ' : '') + (a[Number(n[5])] || b[n[5][0] as any] + ' ' + a[n[5][1] as any]) : '';
-
-    return str.trim() ? str + 'Only' : '';
-};
 
 export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ transaction, onEdit, onClose, onDelete, autoPrint = false }) => {
     const { config } = useConfig();
@@ -189,7 +170,7 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
         return match?.hsnCode || '';
     }
 
-    const amountInWords = useMemo(() => numberToWords(Math.round(tx.total)), [tx.total]);
+    const amountInWords = useMemo(() => numberToIndianWords(tx.total), [tx.total]);
 
     const handleGenerateEInvoice = async () => {
         setIsGeneratingEInvoice(true);
@@ -439,9 +420,9 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                     (() => {
                                         const sellerStateCode = firm.shopDetails.gstin?.substring(0, 2) || '';
                                         const buyerStateCode = tx.placeOfSupply || tx.customerGst?.substring(0, 2) || sellerStateCode;
-                                        const isInterstate = sellerStateCode !== buyerStateCode;
+                                        const isInterstate = isInterstateTransaction(sellerStateCode, buyerStateCode);
                                         const placeOfSupplyName = INDIAN_STATES.find(s => s.code === buyerStateCode)?.name;
-                                        const halfTax = tx.taxAmount / 2;
+                                        const { cgst, sgst, igst } = splitTaxAmount(tx.taxAmount, isInterstate);
                                         const taxPrefix = tx.priceIncludesTax ? '' : '+ ';
 
                                         return (
@@ -455,17 +436,17 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                                 {isInterstate ? (
                                                     <div className="flex justify-between text-gray-600">
                                                         <span>IGST ({firm.financials.gstRate}%)</span>
-                                                        <span>{taxPrefix}{firm.financials.currencySymbol}{tx.taxAmount.toFixed(2)}</span>
+                                                        <span>{taxPrefix}{firm.financials.currencySymbol}{igst.toFixed(2)}</span>
                                                     </div>
                                                 ) : (
                                                     <>
                                                         <div className="flex justify-between text-gray-600 text-sm">
                                                             <span>CGST ({firm.financials.gstRate / 2}%)</span>
-                                                            <span>{taxPrefix}{firm.financials.currencySymbol}{halfTax.toFixed(2)}</span>
+                                                            <span>{taxPrefix}{firm.financials.currencySymbol}{cgst.toFixed(2)}</span>
                                                         </div>
                                                         <div className="flex justify-between text-gray-600 text-sm">
                                                             <span>SGST ({firm.financials.gstRate / 2}%)</span>
-                                                            <span>{taxPrefix}{firm.financials.currencySymbol}{halfTax.toFixed(2)}</span>
+                                                            <span>{taxPrefix}{firm.financials.currencySymbol}{sgst.toFixed(2)}</span>
                                                         </div>
                                                     </>
                                                 )}
@@ -482,7 +463,7 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                 <div className="flex justify-between items-center text-xl font-bold border-t-2 border-black pt-2 mt-2 text-black"><span>Total</span><span>{firm.financials.currencySymbol}{tx.total.toFixed(2)}</span></div>
 
                                 <div className="text-right text-xs italic text-gray-500 mt-1">
-                                    (Rupees {amountInWords})
+                                    ({amountInWords})
                                 </div>
 
                                 {true && (

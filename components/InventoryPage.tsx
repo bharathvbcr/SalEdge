@@ -4,6 +4,7 @@ import { useMasterData } from '../context/MasterDataContext.tsx';
 import { AddStockModal } from './AddStockModal.tsx';
 import { IconPlus, IconChevronDown, IconTrash, IconBox, IconHistory, IconAdjustments, IconChevronUp, IconTrendingUp, IconAlertTriangle, IconPrint } from './icons.tsx';
 import { InventoryItem, ProductType } from '../types.ts';
+import { COMMON_HSN_CODES, DEFAULT_BATTERY_HSN } from '../indianGST.ts';
 import { EmptyState } from './EmptyState.tsx';
 import { ConfirmationModal } from './ConfirmationModal.tsx';
 import { useConfig } from '../context/ConfigContext.tsx';
@@ -44,6 +45,7 @@ const ProductFormModal: React.FC<{
         cRating: product?.specifications.cRating || 'C20',
         lowStockThreshold: product?.lowStockThreshold || config.preferences.defaultLowStockAlert || 0,
         barcode: product?.barcode || '',
+        hsnCode: product?.hsnCode || DEFAULT_BATTERY_HSN,
         defaultGuaranteeMonths: product?.defaultGuaranteeMonths || 0,
         defaultWarrantyMonths: product?.defaultWarrantyMonths || 0,
     });
@@ -62,6 +64,7 @@ const ProductFormModal: React.FC<{
             },
             lowStockThreshold: Number(formData.lowStockThreshold),
             barcode: formData.barcode.trim() || undefined,
+            hsnCode: formData.hsnCode.trim() || undefined,
             defaultGuaranteeMonths: Number(formData.defaultGuaranteeMonths),
             defaultWarrantyMonths: Number(formData.defaultWarrantyMonths),
         }
@@ -94,6 +97,21 @@ const ProductFormModal: React.FC<{
                         </FormField>
                         <FormField label="Barcode / SKU (optional)">
                             <input type="text" placeholder="Product-level barcode for scanning" value={formData.barcode} onChange={e => setFormData({...formData, barcode: e.target.value})} className="form-input font-mono" />
+                        </FormField>
+                        <FormField label="HSN Code">
+                            <input
+                                type="text"
+                                list="common-hsn-codes"
+                                placeholder="e.g. 8507"
+                                value={formData.hsnCode}
+                                onChange={e => setFormData({...formData, hsnCode: e.target.value})}
+                                className="form-input font-mono"
+                            />
+                            <datalist id="common-hsn-codes">
+                                {COMMON_HSN_CODES.map(h => (
+                                    <option key={h.code} value={h.code}>{h.description} ({h.gstRate}%)</option>
+                                ))}
+                            </datalist>
                         </FormField>
                     </div>
 

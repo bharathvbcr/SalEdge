@@ -68,49 +68,6 @@ class HuggingFaceBackend(BaseInferenceBackend):
         generated = outputs[0].get("generated_text", "")
         return generated.strip()
 
-    def chat(
-        self,
-        model: str,
-        messages: list[dict[str, str]],
-        max_tokens: int = 1024,
-        temperature: float = 0.5,
-    ) -> str:
-        del model
-        self._ensure_loaded()
-        assert self._pipeline is not None
-
-        try:
-            from transformers import AutoTokenizer
-
-            tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-            if hasattr(tokenizer, "apply_chat_template"):
-                prompt = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-                return self.generate(
-                    model=self.default_model,
-                    prompt=str(prompt),
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-        except Exception as exc:
-            logger.warning("Chat template unavailable, falling back to plain prompt: %s", exc)
-
-        prompt_parts = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            prompt_parts.append(f"{role.capitalize()}: {content}")
-        prompt_parts.append("Assistant:")
-        return self.generate(
-            model=self.default_model,
-            prompt="\n".join(prompt_parts),
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-
     def health_check(self) -> bool:
         try:
             self._ensure_loaded()

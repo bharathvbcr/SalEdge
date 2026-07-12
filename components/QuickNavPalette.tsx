@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Page, UserRole } from '../types.ts';
 import { Modal } from './Modal.tsx';
-import { filterQuickNavItems, QUICK_NAV_PAGES, QuickNavAction } from '../utils/quickNav.ts';
+import { ADMIN_QUICK_ACTIONS, filterQuickNavItems, QUICK_NAV_PAGES, QuickNavAction } from '../utils/quickNav.ts';
 import { requestOpenSale } from '../utils/mobileSaleQueue.ts';
 import {
     requestInventorySearch,
@@ -24,43 +24,20 @@ export const QuickNavPalette: React.FC<QuickNavPaletteProps> = ({ userRole, onNa
     const inputRef = useRef<HTMLInputElement>(null);
 
     const items = useMemo(() => {
-        const adminActions: QuickNavAction[] = userRole === 'admin' ? [
-            {
-                id: 'log-expense',
-                label: 'Log Expense',
-                hint: 'Open expense form',
-                keywords: ['expense', 'cost', 'rent', 'utilities', 'withdraw'],
-                action: () => { requestOpenExpenseForm(); onNavigate('Expenses'); },
-            },
-            {
-                id: 'make-payment',
-                label: 'Make Payment',
-                hint: 'Money out to supplier',
-                keywords: ['payment', 'withdraw', 'pay', 'supplier', 'bank'],
-                action: () => { requestOpenVoucherForm('Payment'); onNavigate('Banking'); },
-            },
-            {
-                id: 'receive-money',
-                label: 'Receive Money',
-                hint: 'Money in from customer',
-                keywords: ['receive', 'receipt', 'collection', 'customer'],
-                action: () => { requestOpenVoucherForm('Receipt'); onNavigate('Banking'); },
-            },
-            {
-                id: 'new-purchase',
-                label: 'New Purchase',
-                hint: 'Vendor purchase entry',
-                keywords: ['purchase', 'vendor', 'buy'],
-                action: () => onNavigate('Purchases'),
-            },
-            {
-                id: 'reports-month',
-                label: 'Reports (This Month)',
-                hint: 'Monthly analytics',
-                keywords: ['reports', 'analytics', 'month'],
-                action: () => { requestReportsFilter({ period: 'month' }); onNavigate('Reports'); },
-            },
-        ] : [];
+        const adminHandlers: Record<string, () => void> = {
+            'log-expense': () => { requestOpenExpenseForm(); onNavigate('Expenses'); },
+            'make-payment': () => { requestOpenVoucherForm('Payment'); onNavigate('Banking'); },
+            'receive-money': () => { requestOpenVoucherForm('Receipt'); onNavigate('Banking'); },
+            'new-purchase': () => onNavigate('Purchases'),
+            'reports-month': () => { requestReportsFilter({ period: 'month' }); onNavigate('Reports'); },
+        };
+
+        const adminActions: QuickNavAction[] = userRole === 'admin'
+            ? ADMIN_QUICK_ACTIONS.map(def => ({
+                ...def,
+                action: adminHandlers[def.id],
+            }))
+            : [];
 
         const actions: QuickNavAction[] = [
             {

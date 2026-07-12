@@ -44,16 +44,20 @@ export function lookupWarrantyBySerial(serial: string, logs: WarrantyLog[]): War
     return logs.find(l => l.serialNumber.toLowerCase() === q) ?? null;
 }
 
-export function searchWarrantyLogs(query: string, logs: WarrantyLog[], limit = 10): WarrantyLog[] {
+export function searchWarrantyLogs(query: string, logs: WarrantyLog[], limit?: number): WarrantyLog[] {
     const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return logs
-        .filter(l =>
-            l.serialNumber.toLowerCase().includes(q) ||
-            l.customerName.toLowerCase().includes(q) ||
-            l.customerPhone.includes(q) ||
-            l.productName.toLowerCase().includes(q)
-        )
-        .sort((a, b) => new Date(b.saleDate).getTime() - new Date(a.saleDate).getTime())
-        .slice(0, limit);
+    const sorted = [...logs].sort((a, b) => new Date(b.saleDate).getTime() - new Date(a.saleDate).getTime());
+    if (!q) {
+        return limit == null ? sorted : sorted.slice(0, limit);
+    }
+    const matched = sorted.filter(l =>
+        l.serialNumber.toLowerCase().includes(q) ||
+        l.customerName.toLowerCase().includes(q) ||
+        l.customerPhone.includes(q) ||
+        l.productName.toLowerCase().includes(q) ||
+        (l.saleCategory?.toLowerCase().includes(q) ?? false) ||
+        (l.vehicleNumber?.toLowerCase().includes(q) ?? false) ||
+        (l.vehicleModel?.toLowerCase().includes(q) ?? false)
+    );
+    return limit == null ? matched : matched.slice(0, limit);
 }
