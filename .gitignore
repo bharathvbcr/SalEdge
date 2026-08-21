@@ -18,6 +18,12 @@ target/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/gen/schemas/
+src-tauri/WixTools/
+
+# Test Coverage & Tool Caches
+coverage/
+*.tsbuildinfo
+.eslintcache
 
 # Local Runtime & Data
 data/
@@ -87,7 +93,7 @@ dump/
 Thumbs.db
 .AppleDouble
 .LSOverride
-Icon\r\r
+Icon?
 .vscode/*
 !.vscode/extensions.json
 .idea/
