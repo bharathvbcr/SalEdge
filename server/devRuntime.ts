@@ -33,11 +33,20 @@ export function writeDevRuntime(partial: Partial<DevRuntime> & Pick<DevRuntime, 
 
 export function patchDevRuntime(partial: Partial<DevRuntime>): DevRuntime | null {
     const existing = readDevRuntime();
-    if (!existing && partial.apiPort === undefined) return null;
-    return writeDevRuntime({
-        apiPort: partial.apiPort ?? existing!.apiPort,
-        frontendPort: partial.frontendPort ?? existing?.frontendPort,
-    });
+    if (existing || partial.apiPort !== undefined) {
+        return writeDevRuntime({
+            apiPort: partial.apiPort ?? existing!.apiPort,
+            frontendPort: partial.frontendPort ?? existing?.frontendPort,
+        });
+    }
+    // Vite may listen before the API seeds runtime — persist frontend port only.
+    if (partial.frontendPort === undefined) return null;
+    fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+    fs.writeFileSync(RUNTIME_FILE, JSON.stringify({
+        frontendPort: partial.frontendPort,
+        updatedAt: new Date().toISOString(),
+    }, null, 2));
+    return null;
 }
 
 export function getDevFrontendPort(fallback = PREFERRED_FRONTEND_PORT): number {

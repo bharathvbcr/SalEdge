@@ -98,7 +98,7 @@ function expensePrefillFromAction(action: Extract<AiChatAction, { type: 'add_exp
 
 function voucherPrefillFromAction(
     action: Extract<AiChatAction, { type: 'add_payment_voucher' | 'open_voucher_form' }>,
-): VoucherFormPrefill {
+): VoucherFormPrefill & { voucherType: 'Receipt' | 'Payment' } {
     return {
         voucherType: action.voucherType,
         partyType: action.partyType,

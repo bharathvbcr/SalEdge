@@ -3,7 +3,7 @@ import { CHAT_SYSTEM, INSIGHTS_SYSTEM, buildChatPrompt, buildInsightsPrompt, bui
 import { parseJsonFromText, parseChatResponseText, validateInsights, validatePurchaseExtraction } from './jsonUtils.js';
 import { buildChatRagChunks, buildInsightsRagChunks } from './ragChunks.js';
 import { checkSemanticLayerHealth, semanticLayerQuery } from './semanticLayerClient.js';
-import { resolveOllamaModels, type ResolvedOllamaModels } from './ollamaModels.js';
+import { clearOllamaModelCache, resolveOllamaModels, type ResolvedOllamaModels } from './ollamaModels.js';
 import type { AiProvider, ResolvedAiSettings } from './types.js';
 
 interface OllamaChatResponse {
@@ -94,6 +94,7 @@ export function createOllamaProvider(settings: ResolvedAiSettings): AiProvider {
             }
 
             try {
+                clearOllamaModelCache(baseUrl);
                 const models = await resolveModels(settings);
                 const text = await ollamaChat(baseUrl, models.textModel, [
                     { role: 'user', content: TEST_CONNECTION_PROMPT },

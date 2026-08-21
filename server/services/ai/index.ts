@@ -6,6 +6,7 @@ import type { AiProvider, ResolvedAiSettings } from './types.js';
 
 export { parseJsonFromText, validatePurchaseExtraction, validateInsights, detectMimeType } from './jsonUtils.js';
 export {
+    clearOllamaModelCache,
     fetchOllamaModelNames,
     resolveOllamaModels,
     resolveModelsFromList,

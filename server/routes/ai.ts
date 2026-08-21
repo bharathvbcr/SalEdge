@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
 import type { AiBusinessSnapshot, AiActionContext, AiChatMessage, AiSettings } from '../../types.ts';
 import {
+    clearOllamaModelCache,
     createAiProvider,
     detectMimeType,
+    fetchOllamaModelNames,
     resolveAiSettings,
     resolveOllamaModels,
 } from '../services/ai/index.js';
@@ -142,6 +144,9 @@ export async function ollamaModelsHandler(req: Request, res: Response): Promise<
             provider: 'ollama',
         });
 
+        // Settings refresh should see newly pulled models, not a stale 30s cache.
+        clearOllamaModelCache(resolved.ollamaBaseUrl);
+        const available = await fetchOllamaModelNames(resolved.ollamaBaseUrl);
         const models = await resolveOllamaModels({
             baseUrl: resolved.ollamaBaseUrl,
             visionModel: resolved.ollamaVisionModel,
@@ -149,7 +154,7 @@ export async function ollamaModelsHandler(req: Request, res: Response): Promise<
         });
 
         res.json({
-            available: models.available,
+            available,
             selected: {
                 visionModel: models.visionModel,
                 textModel: models.textModel,

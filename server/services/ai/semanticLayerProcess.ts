@@ -163,7 +163,7 @@ function spawnSemanticLayer(port: string, host: string, extraEnv: Record<string,
         || process.env.OLLAMA_BASE_URL
         || 'http://127.0.0.1:11434';
 
-    const env = {
+    const env: NodeJS.ProcessEnv = {
         ...process.env,
         ...extraEnv,
         SEMANTIC_OLLAMA_BASE_URL: ollamaBase,

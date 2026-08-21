@@ -17,6 +17,7 @@
     "build:server": "esbuild server/index.ts --bundle --platform=node --packages=external --format=esm --outfile=dist-server/index.mjs",
     "build:desktop": "npm run build && npm run build:server",
     "typecheck": "tsc --noEmit",
+    "ci:local": "npm run typecheck && npm run build && npm run build:server && cargo check --manifest-path src-tauri/Cargo.toml",
     "start": "tsx server/index.ts",
     "preview": "vite preview",
     "tauri": "tauri",

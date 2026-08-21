@@ -149,12 +149,14 @@ export const VoucherForm: React.FC<{
                         <ul className="absolute z-10 w-full bg-bg-secondary border border-border-color rounded-md mt-1 max-h-48 overflow-y-auto shadow-xl">
                             {filteredParties.length > 0 ? (
                                 filteredParties.map((party) => {
+                                    const supplierId = 'id' in party ? (party as { id: string }).id : undefined;
+                                    const partyPhone = 'phone' in party ? (party as { phone?: string }).phone : undefined;
                                     const key = formData.partyType === 'Supplier'
-                                        ? (party as { id: string }).id
-                                        : `${(party as { name: string }).name}|${(party as { phone?: string }).phone}`;
+                                        ? (supplierId ?? party.name)
+                                        : `${party.name}|${partyPhone ?? ''}`;
                                     const display = formData.partyType === 'Supplier'
-                                        ? (party as { name: string }).name
-                                        : `${(party as { name: string }).name} (${(party as { phone?: string }).phone})`;
+                                        ? party.name
+                                        : `${party.name} (${partyPhone ?? ''})`;
                                     return (
                                         <li
                                             key={key}
@@ -185,7 +187,7 @@ export const VoucherForm: React.FC<{
                 <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label className="block text-xs font-medium text-text-muted mb-1">Method</label>
-                        <select value={formData.method} onChange={e => setFormData({ ...formData, method: e.target.value })} className="form-input">
+                        <select value={formData.method} onChange={e => setFormData({ ...formData, method: e.target.value as PaymentVoucher['method'] })} className="form-input">
                             <option value="Cash">Cash</option>
                             <option value="Bank Transfer">Bank Transfer</option>
                             <option value="UPI">UPI</option>
