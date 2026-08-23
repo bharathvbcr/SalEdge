@@ -46,6 +46,54 @@ export const SettingsPage: React.FC = () => {
     const [isResetModalOpen, setResetModalOpen] = useState(false);
     const [showImportConfirm, setShowImportConfirm] = useState(false);
     const [aiTesting, setAiTesting] = useState(false);
+
+    // E-invoice GSP credentials are held server-side; the browser only ever
+    // sees masked previews. Drafts here are cleared after a successful save.
+    const [gspUrlDraft, setGspUrlDraft] = useState('');
+    const [gspKeyDraft, setGspKeyDraft] = useState('');
+    const [savingGsp, setSavingGsp] = useState(false);
+    const [secretStatus, setSecretStatus] = useState<Record<string, { set: boolean; preview: string | null }>>({});
+    const [backups, setBackups] = useState<{ name: string; sizeBytes: number; createdAt: string }[]>([]);
+    const [creatingBackup, setCreatingBackup] = useState(false);
+    const isAdmin = userRole === 'admin';
+
+    useEffect(() => {
+        if (!isAdmin) return;
+        api.listSecrets().then(({ configured }) => setSecretStatus(configured)).catch(() => { /* admin-only */ });
+        api.listBackups().then(({ backups: list }) => setBackups(list)).catch(() => { /* admin-only */ });
+    }, [isAdmin]);
+
+    const handleSaveGspCredentials = async () => {
+        setSavingGsp(true);
+        try {
+            if (gspKeyDraft.trim()) await api.putSecret('eInvoiceApiKey', gspKeyDraft.trim());
+            if (gspUrlDraft.trim()) await api.putSecret('eInvoiceGspUrl', gspUrlDraft.trim());
+            setGspKeyDraft('');
+            setGspUrlDraft('');
+            const { configured } = await api.listSecrets();
+            setSecretStatus(configured);
+            addToast('GSP credentials saved server-side.', 'success');
+        } catch (err) {
+            addToast(err instanceof Error ? err.message : 'Failed to save credentials', 'error');
+        } finally {
+            setSavingGsp(false);
+        }
+    };
+
+    const handleCreateBackup = async () => {
+        setCreatingBackup(true);
+        try {
+            const { file } = await api.createBackup();
+            addToast(`Backup created: ${file.split('/').pop()}`, 'success');
+            const { backups: list } = await api.listBackups();
+            setBackups(list);
+        } catch (err) {
+            addToast(err instanceof Error ? err.message : 'Backup failed', 'error');
+        } finally {
+            setCreatingBackup(false);
+        }
+    };
+
     
     useEffect(() => {
         setFirmData(config.firms.find(f => f.id === editingFirmId) || null);
@@ -648,15 +696,62 @@ export const SettingsPage: React.FC = () => {
                     </SettingsSection>
                     )}
 
-                    <SettingsSection title="E-Invoice / GSP Integration" description="Configure GSP credentials for live IRN generation (optional).">
-                        <FormField label="GSP API Key">
-                            <input type="password" value={preferences.eInvoiceApiKey || ''} onChange={e => setPreferences(p => ({ ...p, eInvoiceApiKey: e.target.value }))} className="form-input" placeholder="Leave empty to use mock generation" />
+                    <SettingsSection title="E-Invoice / GSP Integration" description="Sandbox mode produces clearly-marked MOCK documents. Live mode files real IRNs through your GSP — credentials are stored server-side only.">
+                        <FormField label="Generation Mode">
+                            <select
+                                value={preferences.eInvoiceMode ?? 'mock'}
+                                onChange={e => setPreferences(p => ({ ...p, eInvoiceMode: e.target.value as 'mock' | 'live' }))}
+                                className="form-input"
+                            >
+                                <option value="mock">Sandbox / Mock (not filed)</option>
+                                <option value="live">Live GSP (files with IRP)</option>
+                            </select>
                         </FormField>
-                        <FormField label="GSP Endpoint URL">
-                            <input type="url" value={preferences.eInvoiceGspUrl || ''} onChange={e => setPreferences(p => ({ ...p, eInvoiceGspUrl: e.target.value }))} className="form-input" placeholder="https://gsp.example.com/api" />
+                        <FormField label="Turnover E-Invoice Mandate">
+                            <div className="flex items-center gap-2 pt-1">
+                                <input
+                                    type="checkbox"
+                                    checked={preferences.eInvoiceMandateApplied ?? false}
+                                    onChange={e => setPreferences(p => ({ ...p, eInvoiceMandateApplied: e.target.checked }))}
+                                    className="h-5 w-5 rounded border-border-color text-brand-red focus:ring-brand-red"
+                                />
+                                <span className="text-sm text-text-secondary">Aggregate turnover crosses ₹5 Cr — B2B invoices require an IRN</span>
+                            </div>
                         </FormField>
-                        <div className="flex justify-end mt-4"><button onClick={handleSavePreferences} className="btn-primary btn-sm">Save GSP Settings</button></div>
+                        <FormField label={`GSP Endpoint URL ${secretStatus.eInvoiceGspUrl?.set ? `(saved: ${secretStatus.eInvoiceGspUrl.preview})` : ''}`}>
+                            <input type="url" value={gspUrlDraft} onChange={e => setGspUrlDraft(e.target.value)} className="form-input" placeholder={secretStatus.eInvoiceGspUrl?.set ? 'Saved — enter a new URL to replace' : 'https://gsp.example.com/api'} autoComplete="off" />
+                        </FormField>
+                        <FormField label={`GSP API Key ${secretStatus.eInvoiceApiKey?.set ? `(saved: ${secretStatus.eInvoiceApiKey.preview})` : ''}`}>
+                            <input type="password" value={gspKeyDraft} onChange={e => setGspKeyDraft(e.target.value)} className="form-input" placeholder={secretStatus.eInvoiceApiKey?.set ? 'Saved — enter a new key to replace' : 'Required for live generation'} autoComplete="new-password" />
+                        </FormField>
+                        <div className="flex justify-end mt-4">
+                            <button onClick={handleSavePreferences} className="btn-secondary btn-sm mr-2">Save Preferences</button>
+                            <button onClick={handleSaveGspCredentials} disabled={savingGsp || (!gspKeyDraft.trim() && !gspUrlDraft.trim())} className="btn-primary btn-sm disabled:opacity-50">
+                                {savingGsp ? 'Saving…' : 'Save Credentials Securely'}
+                            </button>
+                        </div>
                     </SettingsSection>
+
+                    {isAdmin && (
+                        <SettingsSection title="Data & Backups" description="Server-side SQLite backups (kept in data/backups, newest 10). The server also snapshots before imports/resets and on shutdown.">
+                            <div className="flex items-center justify-between gap-4">
+                                <p className="text-sm text-text-muted">{backups.length === 0 ? 'No server backups yet.' : `${backups.length} backup file(s) on disk.`}</p>
+                                <button onClick={handleCreateBackup} disabled={creatingBackup} className="btn-primary btn-sm disabled:opacity-50">
+                                    {creatingBackup ? 'Backing up…' : 'Create Backup Now'}
+                                </button>
+                            </div>
+                            {backups.length > 0 && (
+                                <ul className="text-xs text-text-muted space-y-1 max-h-32 overflow-y-auto">
+                                    {backups.map(b => (
+                                        <li key={b.name} className="flex justify-between font-mono">
+                                            <span>{b.name}</span>
+                                            <span>{(b.sizeBytes / 1024).toFixed(0)} KB</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </SettingsSection>
+                    )}
                     
                     <SettingsSection title="Loyalty Program" description="Configure point system tiers.">
                         <FormField label="Enable Loyalty Program">

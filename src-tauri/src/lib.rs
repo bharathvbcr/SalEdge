@@ -37,7 +37,7 @@ fn augmented_path() -> String {
 fn show_startup_error(message: &str) {
     let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
     let script = format!(
-        r#"display dialog "{escaped}" with title "Battery Shop Management System" buttons {{"OK"}} default button "OK" with icon stop"#
+        r#"display dialog "{escaped}" with title "SalEdge" buttons {{"OK"}} default button "OK" with icon stop"#
     );
     let _ = Command::new("osascript").args(["-e", &script]).status();
 }
@@ -100,7 +100,38 @@ fn check_api_health(port: u16) -> bool {
     response.contains("sqlite")
 }
 
+const MIN_NODE_MAJOR: u32 = 18;
+
+/// Probe `node --version` BEFORE spawning so users get an actionable dialog
+/// instead of a cryptic NODE_MODULE_VERSION crash from an ABI-matched bundle.
+fn ensure_node_runtime() -> Result<PathBuf, String> {
+    let exe = node_executable();
+    let output = Command::new(&exe)
+        .arg("--version")
+        .env("PATH", augmented_path())
+        .output()
+        .map_err(|e| format!("Node.js was not found ({e}). Install it with: brew install node"))?;
+    if !output.status.success() {
+        return Err("Node.js exists but could not be executed.".to_string());
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let major: u32 = version
+        .trim_start_matches('v')
+        .split('.')
+        .next()
+        .unwrap_or("0")
+        .parse()
+        .unwrap_or(0);
+    if major < MIN_NODE_MAJOR {
+        return Err(format!(
+            "SalEdge needs Node.js {MIN_NODE_MAJOR}+ but found {version}. Upgrade with: brew upgrade node"
+        ));
+    }
+    Ok(exe)
+}
+
 fn spawn_api_server(handle: &tauri::AppHandle, port: u16) -> Result<Child, String> {
+    let node_exe = ensure_node_runtime()?;
     let cwd = app_dir(handle)?;
     let data_dir = handle.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
@@ -117,15 +148,21 @@ fn spawn_api_server(handle: &tauri::AppHandle, port: u16) -> Result<Child, Strin
         cmd.args(["tsx", server_entry.to_str().unwrap_or("server/index.ts")]);
         cmd
     } else {
-        let mut cmd = Command::new(node_executable());
+        let mut cmd = Command::new(node_exe);
         cmd.arg(server_entry);
         cmd
     };
 
+    // The window shell speaks PLAIN HTTP on loopback — the embedded server
+    // must not switch to its LAN-HTTPS mode (self-signed cert) or the health
+    // probe below can never succeed. All writable state (DB, backups, certs)
+    // is redirected out of the signed .app bundle into the user's app-data dir.
     command
         .current_dir(&cwd)
         .env("PATH", augmented_path())
         .env("PORT", port.to_string())
+        .env("BSMS_HTTPS", "false")
+        .env("BSMS_DATA_DIR", data_dir.to_string_lossy().into_owned())
         .env(
             "DATABASE_PATH",
             db_path.to_string_lossy().into_owned(),
@@ -170,11 +207,39 @@ fn stop_api_server(handle: &tauri::AppHandle) {
     if let Some(state) = handle.try_state::<ServerProcess>() {
         if let Ok(mut guard) = state.0.lock() {
             if let Some(mut child) = guard.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_gracefully(&mut child);
             }
         }
     }
+}
+
+/// SIGTERM first (lets the Express shutdown hook run its final backup and WAL
+/// checkpoint), then SIGKILL if it refuses to die within the grace period.
+fn terminate_gracefully(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        if libc_kill_term(pid) {
+            for _ in 0..40 {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) => thread::sleep(Duration::from_millis(100)),
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(unix)]
+fn libc_kill_term(pid: i32) -> bool {
+    // Minimal FFI: term(pid, 15). Avoids adding a crate dependency.
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    unsafe { kill(pid, 15) == 0 }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -192,19 +257,22 @@ pub fn run() {
             // In dev, beforeDevCommand already starts the API server.
             if !cfg!(debug_assertions) {
                 let handle = app.handle().clone();
-                let startup = (|| -> Result<(Child, u16), String> {
+                let startup = (|| -> Result<u16, String> {
                     let port = resolve_api_port()?;
                     let child = spawn_api_server(&handle, port)?;
+                    // Register the child IMMEDIATELY so any failure path below
+                    // can still terminate it — previously a failed health wait
+                    // orphaned the Node process holding the preferred port.
+                    app.manage(ServerProcess(Mutex::new(Some(child))));
                     wait_for_api_server(port)?;
                     open_main_window(&handle, port)?;
-                    Ok((child, port))
+                    Ok(port)
                 })();
 
                 match startup {
-                    Ok((child, _port)) => {
-                        app.manage(ServerProcess(Mutex::new(Some(child))));
-                    }
+                    Ok(_port) => {}
                     Err(error) => {
+                        stop_api_server(&handle);
                         show_startup_error(&error);
                         std::process::exit(1);
                     }

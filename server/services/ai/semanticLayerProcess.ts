@@ -10,13 +10,38 @@ import { fileURLToPath } from 'node:url';
 import { checkSemanticLayerHealth } from './semanticLayerClient.js';
 import { resolveOllamaModels } from './ollamaModels.js';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+/**
+ * Repo root must work for BOTH layouts: the source tree (server/services/ai/
+ * → up 3) and the esbuild bundle (dist-server/index.mjs → up 3 lands OUTSIDE
+ * the repo, which made auto-setup spawn node against /home/<user>/scripts/…).
+ * Walk upward looking for the setup script instead of assuming depth.
+ */
+function resolveRepoRoot(): string {
+    let dir = path.dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 8; i++) {
+        if (existsSync(path.join(dir, 'scripts', 'semantic-setup.mjs'))) return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    // Packaged installs ship no setup script — fall back to cwd and let
+    // ensureVenv() fail cleanly into the direct-Ollama path.
+    return process.cwd();
+}
+const REPO_ROOT = resolveRepoRoot();
 
 const PREFERRED_HOST = '127.0.0.1';
 const PREFERRED_PORT = 8090;
 const PORT_SCAN_MAX = 30;
 
 let child: ChildProcess | null = null;
+
+// Per-launch identity: lets waitForHealthy() prove it is talking to THIS
+// build's child rather than a stale orphan squatting on the port.
+const INSTANCE_TOKEN = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+export function getSemanticInstanceToken(): string {
+    return INSTANCE_TOKEN;
+}
 let starting = false;
 let activeSemanticLayerUrl: string | null = null;
 
@@ -167,6 +192,7 @@ function spawnSemanticLayer(port: string, host: string, extraEnv: Record<string,
         ...process.env,
         ...extraEnv,
         SEMANTIC_OLLAMA_BASE_URL: ollamaBase,
+        SEMANTIC_INSTANCE_TOKEN: INSTANCE_TOKEN,
     };
     delete env.PORT;
 
@@ -217,7 +243,9 @@ function sleep(ms: number): Promise<void> {
 async function waitForHealthy(url: string, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-        const health = await checkSemanticLayerHealth(url, 2000);
+        // Strict instance match: a stale orphan from an older build must not
+        // be adopted as if our fresh spawn were ready.
+        const health = await checkSemanticLayerHealth(url, 2000, { expectInstance: INSTANCE_TOKEN });
         if (health.available) {
             console.log(`[semantic] ready at ${url} (${health.latencyMs ?? '?'}ms)`);
             return true;
@@ -237,9 +265,6 @@ export async function ensureSemanticLayerRunning(): Promise<void> {
     starting = true;
     try {
         const target = await resolveSemanticLayerTarget();
-        // #region agent log
-        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'auto-port',hypothesisId:'H1',location:'server/services/ai/semanticLayerProcess.ts:ensureSemanticLayerRunning',message:'Resolved semantic layer target',data:{url:target.url,port:target.port,alreadyRunning:target.alreadyRunning,autoPort:usesAutoPort()},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
 
         if (target.alreadyRunning) {
             return;
@@ -260,9 +285,6 @@ export async function ensureSemanticLayerRunning(): Promise<void> {
                 SEMANTIC_TIER_MEDIUM_MODEL: models.tierMedium,
                 SEMANTIC_TIER_LARGE_MODEL: models.tierLarge,
             };
-            // #region agent log
-            fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'model-discovery',hypothesisId:'H5',location:'server/services/ai/semanticLayerProcess.ts:ensureSemanticLayerRunning',message:'Discovered semantic tier models',data:{ollamaBase,available:models.available,tiers:tierEnv},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
         } catch (err) {
             console.warn(
                 '[semantic] Could not discover Ollama models for tier routing:',

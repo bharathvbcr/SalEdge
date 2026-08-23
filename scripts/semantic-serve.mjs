@@ -110,7 +110,7 @@ const child = spawn(
         host,
         '--port',
         port,
-        '--reload',
+
     ],
     {
         cwd: root,

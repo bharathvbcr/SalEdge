@@ -11,6 +11,8 @@ const SIZE_CLASSES: Record<ModalSize, string> = {
     full: 'max-w-[95vw] max-h-[95vh]',
 };
 
+const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
 interface ModalProps {
     onClose: () => void;
     children: React.ReactNode;
@@ -35,6 +37,52 @@ export const Modal: React.FC<ModalProps> = ({
     const panelRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
+        const previouslyFocused = document.activeElement as HTMLElement | null;
+
+        const panel = panelRef.current;
+        if (panel) {
+            const focusables = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+                .filter((el) => !el.hasAttribute('disabled'));
+            (focusables.length > 0 ? focusables[0] : panel).focus();
+        }
+
+        return () => {
+            if (previouslyFocused?.isConnected) {
+                previouslyFocused.focus();
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        const handleTab = (e: KeyboardEvent) => {
+            if (e.key !== 'Tab') return;
+            const panel = panelRef.current;
+            if (!panel) return;
+            const focusables = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+                .filter((el) => !el.hasAttribute('disabled'));
+            if (focusables.length === 0) {
+                e.preventDefault();
+                panel.focus();
+                return;
+            }
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            const active = document.activeElement;
+            if (e.shiftKey) {
+                if (active === first || active === panel || !panel.contains(active)) {
+                    e.preventDefault();
+                    last.focus();
+                }
+            } else if (active === last || !panel.contains(active)) {
+                e.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener('keydown', handleTab);
+        return () => document.removeEventListener('keydown', handleTab);
+    }, []);
+
+    useEffect(() => {
         const handleKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
         };
@@ -56,6 +104,7 @@ export const Modal: React.FC<ModalProps> = ({
         >
             <div
                 ref={panelRef}
+                tabIndex={-1}
                 className={`modal-panel ${SIZE_CLASSES[size]} ${className}`}
             >
                 {showClose && (

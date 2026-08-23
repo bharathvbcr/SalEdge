@@ -5,6 +5,7 @@ import { Modal, ModalFooter, ModalHeader } from './Modal.tsx';
 import { EmptyState } from './EmptyState.tsx';
 import { useConfig } from '../context/ConfigContext.tsx';
 import { useMasterData } from '../context/MasterDataContext.tsx';
+import { getWarrantyStatus as getWarrantyStatusFull } from '../utils/warrantyLookup.ts';
 
 const StatCard: React.FC<{ label: string; value: string; color?: string }> = ({ label, value, color = 'text-text-primary' }) => (
     <div className="bg-bg-tertiary p-3 rounded-lg text-center">
@@ -13,18 +14,10 @@ const StatCard: React.FC<{ label: string; value: string; color?: string }> = ({ 
     </div>
 );
 
+// Shared with WarrantyPage so both surfaces can never drift apart.
 const getWarrantyStatus = (log: WarrantyLog): { text: string; className: string } => {
-    const now = new Date();
-    const guaranteeEndDate = new Date(log.guaranteeEndDate);
-    const warrantyEndDate = new Date(log.warrantyEndDate);
-
-    if (now <= guaranteeEndDate) {
-        return { text: 'In Guarantee', className: 'bg-status-green-bg text-status-green-text' };
-    }
-    if (now <= warrantyEndDate) {
-        return { text: 'In Warranty', className: 'bg-status-yellow-bg text-status-yellow-text' };
-    }
-    return { text: 'Expired', className: 'bg-status-red-bg text-status-red-text' };
+    const status = getWarrantyStatusFull(log);
+    return { text: status.text, className: status.className };
 };
 
 

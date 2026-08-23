@@ -10,9 +10,13 @@ export function computeBalances(
     let bankBalance = 0;
 
     transactions.forEach(t => {
+        // Return (credit note) payments are refunds: money leaves the drawer /
+        // bank. Payment amounts are stored positive for returns, so flip the
+        // direction instead of adding the payout as income.
+        const direction = t.type === 'Return' ? -1 : 1;
         t.payments.forEach(p => {
-            if (p.method === 'Cash') cashBalance += p.amount;
-            else bankBalance += p.amount;
+            if (p.method === 'Cash') cashBalance += direction * p.amount;
+            else bankBalance += direction * p.amount;
         });
     });
 
@@ -38,9 +42,18 @@ export function computeBalances(
         } else if (v.type === 'Payment') {
             if (isCash) cashBalance -= v.amount;
             else bankBalance -= v.amount;
-        } else if (v.type === 'Contra' && isCash) {
-            cashBalance -= v.amount;
-            bankBalance += v.amount;
+        } else if (v.type === 'Contra') {
+            // Contra = transfer between own accounts. Method Cash means the
+            // drawer was deposited into the bank; any other method means a
+            // withdrawal from the bank into the drawer. Previously non-cash
+            // contras were silently ignored and balances didn't move.
+            if (isCash) {
+                cashBalance -= v.amount;
+                bankBalance += v.amount;
+            } else {
+                cashBalance += v.amount;
+                bankBalance -= v.amount;
+            }
         }
     });
 

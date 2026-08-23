@@ -181,7 +181,9 @@ export function computeProfitLoss(
 
     transactions.forEach(t => {
         if (t.type === 'Return') {
-            returns += t.total;
+            // Track returns on the SAME ex-tax basis as revenue so
+            // netRevenue reconciles; COGS reversal nets the original sale.
+            returns += t.total - t.taxAmount;
             t.items.forEach(item => {
                 if (!item.isBuyback && item.purchasePrice) {
                     cogs -= item.purchasePrice * item.quantity;
@@ -204,7 +206,9 @@ export function computeProfitLoss(
         expenseByCategory[e.category] = (expenseByCategory[e.category] || 0) + e.amount;
     });
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
-    const netRevenue = revenue;
+    // A credit note must REDUCE revenue — previously `netRevenue` ignored it,
+    // so returns inflated profit twice (revenue kept + COGS reversed).
+    const netRevenue = revenue - returns;
     const grossProfit = netRevenue - cogs;
 
     return {

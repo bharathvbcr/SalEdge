@@ -1,4 +1,5 @@
 import { Transaction } from '../types.ts';
+import { toDateKeyLocal } from './localDate.ts';
 
 export type MonthlySalesRow = {
     month: string; // YYYY-MM
@@ -72,27 +73,26 @@ export function computeMovingAverageForecast(
     windowDays = 30,
     forecastDays = 30
 ): ForecastPoint[] {
+    // Group by LOCAL calendar day (matches how transactions are keyed) and
+    // INCLUDE today — previously IST days shifted one back and the most
+    // recent actuals were invisible to the forecast.
     const dailyRevenue: Record<string, number> = {};
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
 
     transactions
         .filter(t => t.type !== 'Return' && t.status !== 'Quotation')
         .forEach(t => {
-            const d = new Date(t.date);
-            d.setHours(0, 0, 0, 0);
-            const key = d.toISOString().split('T')[0];
+            const key = toDateKeyLocal(new Date(t.date));
             dailyRevenue[key] = (dailyRevenue[key] || 0) + t.total;
         });
 
     const points: ForecastPoint[] = [];
-    const historyStart = new Date(now);
-    historyStart.setDate(historyStart.getDate() - windowDays);
+    const historyStart = new Date();
+    historyStart.setDate(historyStart.getDate() - (windowDays - 1));
 
     for (let i = 0; i < windowDays; i++) {
         const d = new Date(historyStart);
         d.setDate(d.getDate() + i);
-        const key = d.toISOString().split('T')[0];
+        const key = toDateKeyLocal(d);
         points.push({ date: key, predicted: dailyRevenue[key] || 0, isForecast: false });
     }
 
@@ -100,11 +100,12 @@ export function computeMovingAverageForecast(
     const avg = recentValues.reduce((s, v) => s + v, 0) / Math.max(1, recentValues.length);
 
     for (let i = 1; i <= forecastDays; i++) {
-        const d = new Date(now);
+        const d = new Date();
         d.setDate(d.getDate() + i);
         points.push({
-            date: d.toISOString().split('T')[0],
-            predicted: Math.round(avg * 100) / 100,
+            date: toDateKeyLocal(d),
+            // Buyback-heavy windows must not project negative revenue.
+            predicted: Math.max(0, Math.round(avg * 100) / 100),
             isForecast: true,
         });
     }

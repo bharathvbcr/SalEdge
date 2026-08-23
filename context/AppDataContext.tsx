@@ -1,14 +1,23 @@
 
 
-import React, { createContext, useContext, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, ReactNode, useEffect, useState, useCallback, useMemo } from 'react';
 import useApiStorage from '../hooks/useApiStorage.tsx';
+import { api } from '../utils/api.ts';
 import { InventoryItem, ServiceJob, Transaction, ServiceJobStatus, WarrantyLog, Expense, InventoryLog, ScrapItem, Purchase, PurchaseItem, PaymentVoucher, StockTakeAdjustment, AuditLog, UserRole, PurchaseInvoiceUpload, DailyClose, MonthlyClose, YearlyClose } from '../types.ts';
 import { INITIAL_INVENTORY, INITIAL_SERVICE_JOBS, INITIAL_TRANSACTIONS, INITIAL_EXPENSES } from '../constants.ts';
+import { hasLegacyNegativeReturns, normalizeLegacyReturnSigns } from '../utils/canonicalReturns.ts';
 import { useToast } from './ToastContext.tsx';
 import { useMasterData } from './MasterDataContext.tsx';
 import { useConfig } from './ConfigContext.tsx';
+import { useAuth } from './AuthContext.tsx';
 import { isSerialInInventory, normalizeSerial, isSerialTrackedItem, clampSerialStock, parseTransactionSerials, findSerialInventoryRecord } from '../utils/serialNumbers.ts';
 import { SHARED_INVENTORY_FIRM_ID, normalizeInventoryFirmIds, sharedInventoryFirmId } from '../utils/sharedInventory.ts';
+import { computeWarrantyEnds } from '../utils/warrantyDates.ts';
+
+// Unbounded growth directly inflates every debounced whole-collection save,
+// so rolling logs are hard-capped.
+const MAX_INVENTORY_LOGS = 1000;
+const MAX_AUDIT_LOGS_DISPLAYED = 200;
 
 interface AppDataContextType {
     isLoading: boolean;
@@ -68,6 +77,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
     const { addToast } = useToast();
     const { productTypes } = useMasterData();
     const { config } = useConfig();
+    const { userRole } = useAuth();
 
     const [inventory, setInventory, invLoading] = useApiStorage<InventoryItem[]>('inventory', normalizeInventoryFirmIds(INITIAL_INVENTORY));
     const [scrapInventory, setScrapInventory, scrapLoading] = useApiStorage<ScrapItem[]>('scrapInventory', []);
@@ -79,21 +89,67 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
     const [purchases, setPurchases, purLoading] = useApiStorage<Purchase[]>('purchases', []);
     const [purchaseInvoiceQueue, setPurchaseInvoiceQueue, piqLoading] = useApiStorage<PurchaseInvoiceUpload[]>('purchaseInvoiceQueue', []);
     const [paymentVouchers, setPaymentVouchers, vchLoading] = useApiStorage<PaymentVoucher[]>('paymentVouchers', []);
-    const [auditLogs, setAuditLogs, audLoading] = useApiStorage<AuditLog[]>('auditLogs', []);
     const [dailyCloses, setDailyCloses, dcLoading] = useApiStorage<DailyClose[]>('dailyCloses', []);
     const [monthlyCloses, setMonthlyCloses, mcLoading] = useApiStorage<MonthlyClose[]>('monthlyCloses', []);
     const [yearlyCloses, setYearlyCloses, ycLoading] = useApiStorage<YearlyClose[]>('yearlyCloses', []);
 
-    const isLoading = invLoading || scrapLoading || jobsLoading || txLoading || wtyLoading || expLoading || logsLoading || purLoading || piqLoading || vchLoading || audLoading || dcLoading || mcLoading || ycLoading;
+    // Audit trail lives server-side in an append-only table (tamper-proof,
+    // survives Reset App). Local state is a display cache hydrated from it.
+    const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+    useEffect(() => {
+        if (userRole !== 'admin') return;
+        let cancelled = false;
+        api.getAuditLogs(MAX_AUDIT_LOGS_DISPLAYED)
+            .then(({ entries }) => {
+                if (cancelled) return;
+                setAuditLogs(entries.map(e => ({
+                    id: e.id,
+                    date: e.date,
+                    action: e.action as AuditLog['action'],
+                    entityType: (e.entityType || 'AppData') as AuditLog['entityType'],
+                    entityId: e.entityId || '',
+                    userRole: (e.userRole || 'staff') as AuditLog['userRole'],
+                    details: e.details || '',
+                })));
+            })
+            .catch(() => { /* viewer falls back to "no entries" */ });
+        return () => { cancelled = true; };
+    }, [userRole]);
 
-    const addAuditLog = (log: Omit<AuditLog, 'id' | 'date'>) => {
+    const isLoading = invLoading || scrapLoading || jobsLoading || txLoading || wtyLoading || expLoading || logsLoading || purLoading || piqLoading || vchLoading || dcLoading || mcLoading || ycLoading;
+
+    // One-shot heal for legacy credit notes stored with NEGATIVE magnitudes.
+    // SalesForm used to persist returns with negative total/tax/item prices,
+    // while every report helper assumes positive values and flips direction
+    // off `type === 'Return'` — a full refund inflated customer spend/dues and
+    // drawer balances. Normalize once; the storage layer persists the fix.
+    useEffect(() => {
+        if (txLoading) return;
+        setTransactions(prev => {
+            if (!hasLegacyNegativeReturns(prev)) return prev;
+            return normalizeLegacyReturnSigns(prev);
+        });
+        // Runs once per mount; functional update keeps it self-healing but
+        // idempotent, so no loop is possible.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [txLoading, setTransactions]);
+
+    const addAuditLog = useCallback((log: Omit<AuditLog, 'id' | 'date'>) => {
         const entry: AuditLog = {
-            id: `AUD-${Date.now()}`,
+            id: `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             date: new Date().toISOString(),
             ...log,
         };
-        setAuditLogs(prev => [entry, ...prev].slice(0, 500));
-    };
+        setAuditLogs(prev => [entry, ...prev].slice(0, MAX_AUDIT_LOGS_DISPLAYED));
+        api.postAuditLog({
+            action: entry.action,
+            entityType: entry.entityType,
+            entityId: entry.entityId,
+            userRole: entry.userRole,
+            details: entry.details,
+            snapshot: entry.snapshot,
+        });
+    }, []);
 
     useEffect(() => {
         const needsSharedFirm = inventory.some(item => item.firmId !== SHARED_INVENTORY_FIRM_ID);
@@ -102,26 +158,31 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
     }, []);
 
-    const getProductName = (productTypeId: string) => {
+    const getProductName = useCallback((productTypeId: string) => {
         const product = productTypes.find(p => p.id === productTypeId);
         return product ? `${product.brandName} ${product.name}` : 'Unknown Product';
-    };
+    }, [productTypes]);
 
-    const normalizeInventoryRecords = (items: InventoryItem[]): InventoryItem[] =>
+    const normalizeInventoryRecords = useCallback((items: InventoryItem[]): InventoryItem[] =>
         items
             .map(item => isSerialTrackedItem(item) ? { ...item, stock: clampSerialStock(item.stock) } : item)
-            .filter(item => item.stock > 0 || isSerialTrackedItem(item));
+            .filter(item => item.stock > 0 || isSerialTrackedItem(item)), []);
 
-    const addInventoryLog = (logData: Omit<InventoryLog, 'id' | 'date'>) => {
+    /**
+     * Side-effect-free logging helper: appends through a functional update only
+     * (never call this from inside another setState updater — StrictMode
+     * double-invocation would duplicate entries).
+     */
+    const addInventoryLog = useCallback((logData: Omit<InventoryLog, 'id' | 'date'>) => {
         const newLog: InventoryLog = {
-            id: `LOG-${Date.now()}`,
+            id: `LOG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             date: new Date().toISOString(),
             ...logData
         };
-        setInventoryLogs(prev => [newLog, ...prev]);
-    };
+        setInventoryLogs(prev => [newLog, ...prev].slice(0, MAX_INVENTORY_LOGS));
+    }, [setInventoryLogs]);
 
-    const addStock = (newItem: Omit<InventoryItem, 'id'>, options?: { referenceId?: string; reason?: string }): boolean => {
+    const addStock = useCallback((newItem: Omit<InventoryItem, 'id'>, options?: { referenceId?: string; reason?: string }): boolean => {
         const serialNumber = normalizeSerial(newItem.serialNumber);
         if (!serialNumber) {
             addToast('Serial number is required for each battery.', 'error');
@@ -134,9 +195,11 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
 
         const soldUnit = findSerialInventoryRecord(serialNumber, inventory);
         if (soldUnit && soldUnit.stock <= 0) {
+            const unitId = soldUnit.id;
+            const unitProductTypeId = soldUnit.productTypeId;
             setInventory(prev => normalizeInventoryRecords(
                 prev.map(item =>
-                    item.id === soldUnit.id
+                    item.id === unitId
                         ? {
                             ...item,
                             ...newItem,
@@ -151,8 +214,8 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 )
             ));
             addInventoryLog({
-                inventoryItemId: soldUnit.id,
-                productName: getProductName(soldUnit.productTypeId),
+                inventoryItemId: unitId,
+                productName: getProductName(unitProductTypeId),
                 change: 1,
                 newQuantity: 1,
                 reason: options?.reason || 'Battery returned to inventory',
@@ -162,7 +225,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
 
         const newStockItem: InventoryItem = {
-            id: `INV${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            id: `INV${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             ...newItem,
             firmId: sharedInventoryFirmId(),
             serialNumber,
@@ -178,9 +241,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             referenceId: options?.referenceId,
         });
         return true;
-    };
+    }, [inventory, setInventory, addInventoryLog, getProductName, addToast]);
 
-    const updateStockQuantity = (inventoryItemId: string, quantityToAdd: number) => {
+    const updateStockQuantity = useCallback((inventoryItemId: string, quantityToAdd: number) => {
         const item = inventory.find(i => i.id === inventoryItemId);
         if (!item) {
             addToast('Inventory item not found', 'error');
@@ -202,14 +265,13 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
         if (newQuantity === item.stock) return;
 
-        setInventory(prev => {
-            const updated = prev.map(invItem =>
+        setInventory(prev => normalizeInventoryRecords(
+            prev.map(invItem =>
                 invItem.id === inventoryItemId
                     ? { ...invItem, stock: newQuantity }
                     : invItem
-            );
-            return normalizeInventoryRecords(updated);
-        });
+            )
+        ));
 
         addInventoryLog({
             inventoryItemId: item.id,
@@ -218,9 +280,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             newQuantity: newQuantity,
             reason: quantityToAdd < 0 ? 'Stock Reduction/Transfer' : 'Stock Addition'
         });
-    };
+    }, [inventory, setInventory, addInventoryLog, getProductName, addToast]);
 
-    const updateBatchDetails = (inventoryItemId: string, updatedDetails: Partial<Omit<InventoryItem, 'id' | 'stock' | 'productTypeId'>>) => {
+    const updateBatchDetails = useCallback((inventoryItemId: string, updatedDetails: Partial<Omit<InventoryItem, 'id' | 'stock' | 'productTypeId'>>) => {
         if (updatedDetails.serialNumber !== undefined) {
             const serial = normalizeSerial(updatedDetails.serialNumber);
             const item = inventory.find(i => i.id === inventoryItemId);
@@ -236,9 +298,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 : item
         ));
         addToast('Batch details updated!', 'info');
-    };
+    }, [inventory, setInventory, addToast]);
 
-    const deleteBatch = (inventoryItemId: string) => {
+    const deleteBatch = useCallback((inventoryItemId: string) => {
         const itemToDelete = inventory.find(i => i.id === inventoryItemId);
         if (itemToDelete && itemToDelete.stock > 0) {
             addToast('Cannot delete a batch that is not empty. Please adjust stock to 0 first.', 'error');
@@ -246,9 +308,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
         setInventory(prev => prev.filter(item => item.id !== inventoryItemId));
         addToast('Empty batch deleted!', 'warning');
-    };
+    }, [inventory, setInventory, addToast]);
 
-    const adjustStock = (inventoryItemId: string, newQuantity: number, reason: string) => {
+    const adjustStock = useCallback((inventoryItemId: string, newQuantity: number, reason: string) => {
         if (newQuantity < 0) {
             addToast('Stock quantity cannot be negative', 'error');
             return;
@@ -261,69 +323,63 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             return;
         }
 
-        setInventory(prev => {
-            let change = 0;
-            const item = prev.find(i => i.id === inventoryItemId);
-            if (item) {
-                change = newQuantity - item.stock;
-                addInventoryLog({
-                    inventoryItemId,
-                    productName: getProductName(item.productTypeId),
-                    change,
-                    newQuantity,
-                    reason: `Stock Adjustment: ${reason}`
-                });
-            }
-            return normalizeInventoryRecords(
-                prev
-                    .map(item => item.id === inventoryItemId ? { ...item, stock: newQuantity } : item)
-            );
+        setInventory(prev => normalizeInventoryRecords(
+            prev.map(item => item.id === inventoryItemId ? { ...item, stock: newQuantity } : item)
+        ));
+
+        // Log computed from pre-update values outside the setState updater
+        // (impure updaters duplicate side effects under StrictMode).
+        addInventoryLog({
+            inventoryItemId,
+            productName: getProductName(itemToAdjust.productTypeId),
+            change: newQuantity - itemToAdjust.stock,
+            newQuantity,
+            reason: `Stock Adjustment: ${reason}`
         });
         addToast('Stock quantity adjusted!', 'info');
-    };
+    }, [inventory, setInventory, addInventoryLog, getProductName, addToast]);
 
-    const performStockTake = (adjustments: StockTakeAdjustment[]) => {
+    const performStockTake = useCallback((adjustments: StockTakeAdjustment[]) => {
         const sessionId = `STK-${Date.now()}`;
-        let adjustedCount = 0;
+        const pendingLogs: Omit<InventoryLog, 'id' | 'date'>[] = [];
 
-        setInventory(prev => {
-            const updated = prev.map(item => {
-                const adj = adjustments.find(a => a.inventoryItemId === item.id);
-                if (!adj || adj.countedQty === item.stock) return item;
+        const updated = inventory.map(item => {
+            const adj = adjustments.find(a => a.inventoryItemId === item.id);
+            if (!adj || adj.countedQty === item.stock) return item;
 
-                const countedQty = isSerialTrackedItem(item) ? clampSerialStock(adj.countedQty) : adj.countedQty;
-                const change = countedQty - item.stock;
-                addInventoryLog({
-                    inventoryItemId: item.id,
-                    productName: getProductName(item.productTypeId),
-                    change,
-                    newQuantity: countedQty,
-                    reason: `Stock Take ${sessionId}`,
-                    referenceId: sessionId,
-                });
-                adjustedCount++;
-                return { ...item, stock: countedQty };
+            const countedQty = isSerialTrackedItem(item) ? clampSerialStock(adj.countedQty) : adj.countedQty;
+            const change = countedQty - item.stock;
+            pendingLogs.push({
+                inventoryItemId: item.id,
+                productName: getProductName(item.productTypeId),
+                change,
+                newQuantity: countedQty,
+                reason: `Stock Take ${sessionId}`,
+                referenceId: sessionId,
             });
-            return normalizeInventoryRecords(updated);
+            return { ...item, stock: countedQty };
         });
 
-        if (adjustedCount > 0) {
-            addToast(`Stock take complete: ${adjustedCount} batch(es) adjusted.`, 'success');
-        } else {
+        if (pendingLogs.length === 0) {
             addToast('Stock take complete: no variances found.', 'info');
+            return;
         }
-    };
 
-    const addScrapItem = (item: Omit<ScrapItem, 'id'>) => {
+        setInventory(normalizeInventoryRecords(updated));
+        pendingLogs.forEach(addInventoryLog);
+        addToast(`Stock take complete: ${pendingLogs.length} batch(es) adjusted.`, 'success');
+    }, [inventory, setInventory, addInventoryLog, getProductName, addToast]);
+
+    const addScrapItem = useCallback((item: Omit<ScrapItem, 'id'>) => {
         const newItem: ScrapItem = { ...item, id: `SCRAP${Date.now()}` };
         setScrapInventory(prev => [...prev, newItem]);
-    };
+    }, [setScrapInventory]);
 
-    const markScrapSold = (id: string) => {
+    const markScrapSold = useCallback((id: string) => {
         setScrapInventory(prev => prev.map(item => item.id === id ? { ...item, status: 'Sold' } : item));
-    };
+    }, [setScrapInventory]);
 
-    const addServiceJob = (newJob: Omit<ServiceJob, 'id' | 'status' | 'receivedDate'>) => {
+    const addServiceJob = useCallback((newJob: Omit<ServiceJob, 'id' | 'status' | 'receivedDate'>) => {
         const job: ServiceJob = {
             ...newJob, id: `JOB${Date.now()}`,
             status: ServiceJobStatus.PENDING,
@@ -331,26 +387,26 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         };
         setServiceJobs(prev => [job, ...prev]);
         addToast('New service job added!', 'success');
-    };
+    }, [setServiceJobs, addToast]);
 
-    const updateServiceJob = (updatedJob: ServiceJob) => {
+    const updateServiceJob = useCallback((updatedJob: ServiceJob) => {
         setServiceJobs(prev => prev.map(job => (job.id === updatedJob.id ? updatedJob : job)));
         addToast(`Job ${updatedJob.id} updated!`, 'info');
-    };
+    }, [setServiceJobs, addToast]);
 
-    const manageWarrantyLogs = (transaction: Transaction) => {
+    const manageWarrantyLogs = useCallback((transaction: Transaction) => {
         const newLogs: Omit<WarrantyLog, 'id'>[] = [];
         transaction.items.forEach(item => {
             if (item.serialNumbers && (item.guaranteePeriodMonths || item.warrantyPeriodMonths)) {
                 const serials = item.serialNumbers.split(',').map(s => s.trim()).filter(Boolean);
                 serials.forEach(serial => {
-                    const saleDate = new Date(transaction.date);
-                    const guaranteeMonths = item.guaranteePeriodMonths || 0;
-                    const warrantyMonths = item.warrantyPeriodMonths || 0;
-                    const guaranteeEndDate = new Date(saleDate);
-                    guaranteeEndDate.setMonth(guaranteeEndDate.getMonth() + guaranteeMonths);
-                    const warrantyEndDate = new Date(saleDate);
-                    warrantyEndDate.setMonth(warrantyEndDate.getMonth() + guaranteeMonths + warrantyMonths);
+                    // Month-end clamped math: Jan 31 + 1mo ends Feb 28/29,
+                    // not Mar 3 (raw setMonth overflow).
+                    const { guaranteeEndDate, warrantyEndDate } = computeWarrantyEnds(
+                        transaction.date,
+                        item.guaranteePeriodMonths || 0,
+                        item.warrantyPeriodMonths || 0
+                    );
 
                     newLogs.push({
                         transactionId: transaction.id, inventoryId: item.id, productName: item.name,
@@ -359,8 +415,8 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                         saleCategory: transaction.saleCategory,
                         vehicleNumber: transaction.vehicleNumber,
                         vehicleModel: transaction.vehicleModel,
-                        guaranteePeriodMonths: guaranteeMonths, guaranteeEndDate: guaranteeEndDate.toISOString(),
-                        warrantyPeriodMonths: warrantyMonths, warrantyEndDate: warrantyEndDate.toISOString(),
+                        guaranteePeriodMonths: item.guaranteePeriodMonths || 0, guaranteeEndDate,
+                        warrantyPeriodMonths: item.warrantyPeriodMonths || 0, warrantyEndDate,
                     });
                 });
             }
@@ -368,34 +424,39 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (newLogs.length > 0) {
             setWarrantyLogs(prev => [...prev, ...newLogs.map((log, i) => ({ ...log, id: `WTY-${Date.now()}-${i}` }))]);
         }
-    };
+    }, [setWarrantyLogs]);
 
-    const addTransaction = (newTransactionData: Omit<Transaction, 'id'>): Transaction => {
+    const addTransaction = useCallback((newTransactionData: Omit<Transaction, 'id'>): Transaction => {
         const newTransaction: Transaction = { ...newTransactionData, id: `TRN${Date.now()}` };
         const isReturn = newTransaction.type === 'Return';
 
         if (newTransaction.status !== 'Quotation') {
-            setInventory(currentInventory => {
-                return normalizeInventoryRecords(currentInventory.map(invItem => {
-                    const itemInSale = newTransaction.items.find(i => i.id === invItem.id && !i.isCustom && !i.isBuyback);
-                    if (itemInSale) {
-                        const quantityChange = isReturn ? itemInSale.quantity : -itemInSale.quantity;
-                        const newStock = isSerialTrackedItem(invItem)
-                            ? clampSerialStock(invItem.stock + quantityChange)
-                            : invItem.stock + quantityChange;
-                        addInventoryLog({
-                            inventoryItemId: invItem.id,
-                            productName: getProductName(invItem.productTypeId),
-                            change: newStock - invItem.stock,
-                            newQuantity: newStock,
-                            reason: isReturn ? 'Sales Return' : 'Sale',
-                            referenceId: newTransaction.id,
-                        });
-                        return { ...invItem, stock: newStock };
-                    }
-                    return invItem;
-                }));
-            });
+            // Compute stock changes from the current array OUTSIDE setState so
+            // the accompanying inventory logs are emitted exactly once.
+            const pendingLogs: Omit<InventoryLog, 'id' | 'date'>[] = [];
+            const updatedInventory = normalizeInventoryRecords(inventory.map(invItem => {
+                const itemInSale = newTransaction.items.find(i => i.id === invItem.id && !i.isCustom && !i.isBuyback);
+                if (itemInSale) {
+                    const quantityChange = isReturn ? itemInSale.quantity : -itemInSale.quantity;
+                    const newStock = isSerialTrackedItem(invItem)
+                        ? clampSerialStock(invItem.stock + quantityChange)
+                        : invItem.stock + quantityChange;
+                    pendingLogs.push({
+                        inventoryItemId: invItem.id,
+                        productName: getProductName(invItem.productTypeId),
+                        change: newStock - invItem.stock,
+                        newQuantity: newStock,
+                        reason: isReturn ? 'Sales Return' : 'Sale',
+                        referenceId: newTransaction.id,
+                    });
+                    return { ...invItem, stock: newStock };
+                }
+                return invItem;
+            }));
+            if (pendingLogs.length > 0) {
+                setInventory(updatedInventory);
+                pendingLogs.forEach(addInventoryLog);
+            }
 
             if (isReturn && newTransaction.originalTransactionId) {
                 const returnedSerials = new Set(
@@ -431,34 +492,33 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
         setTransactions(prev => [newTransaction, ...prev]);
         return newTransaction;
-    };
+    }, [inventory, setInventory, setTransactions, addInventoryLog, addScrapItem, manageWarrantyLogs, getProductName, addToast]);
 
-    const updateTransaction = (originalTransaction: Transaction, updatedTransactionData: Omit<Transaction, 'id'>) => {
+    const updateTransaction = useCallback((originalTransaction: Transaction, updatedTransactionData: Omit<Transaction, 'id'>) => {
         const wasQuotation = originalTransaction.status === 'Quotation';
         const isNowSale = updatedTransactionData.status === 'Paid' || updatedTransactionData.status === 'Due';
 
-        setInventory(currentInventory => {
-            const stockAdjustments = new Map<string, number>();
-            const originalQuantities = new Map(originalTransaction.items.filter(i => !i.isCustom && !i.isBuyback).map(i => [i.id, i.quantity]));
-            const updatedQuantities = new Map(updatedTransactionData.items.filter(i => !i.isCustom && !i.isBuyback).map(i => [i.id, i.quantity]));
-            const allItemIds = new Set([...originalQuantities.keys(), ...updatedQuantities.keys()]);
+        const stockAdjustments = new Map<string, number>();
+        const originalQuantities = new Map(originalTransaction.items.filter(i => !i.isCustom && !i.isBuyback).map(i => [i.id, i.quantity]));
+        const updatedQuantities = new Map(updatedTransactionData.items.filter(i => !i.isCustom && !i.isBuyback).map(i => [i.id, i.quantity]));
+        const allItemIds = new Set([...originalQuantities.keys(), ...updatedQuantities.keys()]);
 
-            allItemIds.forEach(itemId => {
-                const originalQty = wasQuotation ? 0 : (originalQuantities.get(itemId) || 0);
-                const updatedQty = isNowSale ? (updatedQuantities.get(itemId) || 0) : 0;
-                const adjustment = originalQty - updatedQty;
-                if (adjustment !== 0) stockAdjustments.set(itemId, adjustment);
-            });
+        allItemIds.forEach(itemId => {
+            const originalQty = wasQuotation ? 0 : (originalQuantities.get(itemId) || 0);
+            const updatedQty = isNowSale ? (updatedQuantities.get(itemId) || 0) : 0;
+            const adjustment = originalQty - updatedQty;
+            if (adjustment !== 0) stockAdjustments.set(itemId, adjustment);
+        });
 
-            if (stockAdjustments.size === 0) return currentInventory;
-
-            return normalizeInventoryRecords(currentInventory.map(invItem => {
+        if (stockAdjustments.size > 0) {
+            const pendingLogs: Omit<InventoryLog, 'id' | 'date'>[] = [];
+            const updatedInventory = normalizeInventoryRecords(inventory.map(invItem => {
                 if (stockAdjustments.has(invItem.id)) {
                     const change = stockAdjustments.get(invItem.id) ?? 0;
                     const newStock = isSerialTrackedItem(invItem)
                         ? clampSerialStock(invItem.stock + change)
                         : invItem.stock + change;
-                    addInventoryLog({
+                    pendingLogs.push({
                         inventoryItemId: invItem.id,
                         productName: getProductName(invItem.productTypeId),
                         change: -change,
@@ -470,7 +530,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 }
                 return invItem;
             }));
-        });
+            setInventory(updatedInventory);
+            pendingLogs.forEach(addInventoryLog);
+        }
 
         const updatedTransaction: Transaction = { ...updatedTransactionData, id: originalTransaction.id };
         setTransactions(prev => prev.map(t => t.id === originalTransaction.id ? updatedTransaction : t));
@@ -479,9 +541,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (isNowSale && updatedTransaction.type !== 'Return') manageWarrantyLogs(updatedTransaction);
 
         addToast(`Transaction ${originalTransaction.id} updated!`, 'success');
-    };
+    }, [inventory, setInventory, setTransactions, setWarrantyLogs, addInventoryLog, manageWarrantyLogs, getProductName, addToast]);
 
-    const checkStockReversalForDelete = (transaction: Transaction): { ok: boolean; warnings: string[] } => {
+    const checkStockReversalForDelete = useCallback((transaction: Transaction): { ok: boolean; warnings: string[] } => {
         const warnings: string[] = [];
         if (transaction.status === 'Quotation') return { ok: true, warnings };
 
@@ -496,40 +558,44 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             }
         }
         return { ok: warnings.length === 0, warnings };
-    };
+    }, [inventory]);
 
-    const reverseTransactionStock = (transaction: Transaction) => {
+    const reverseTransactionStock = useCallback((transaction: Transaction) => {
         if (transaction.status === 'Quotation') return;
         const isReturn = transaction.type === 'Return';
 
-        setInventory(currentInventory => {
-            return normalizeInventoryRecords(currentInventory.map(invItem => {
-                const itemInTx = transaction.items.find(i => i.id === invItem.id && !i.isCustom && !i.isBuyback);
-                if (!itemInTx) return invItem;
-                const quantityChange = isReturn ? -itemInTx.quantity : itemInTx.quantity;
-                const newStock = isSerialTrackedItem(invItem)
-                    ? clampSerialStock(invItem.stock + quantityChange)
-                    : invItem.stock + quantityChange;
-                addInventoryLog({
-                    inventoryItemId: invItem.id,
-                    productName: getProductName(invItem.productTypeId),
-                    change: newStock - invItem.stock,
-                    newQuantity: newStock,
-                    reason: `Delete reversal: ${transaction.id}`,
-                    referenceId: transaction.id,
-                });
-                return { ...invItem, stock: newStock };
-            }));
-        });
-    };
+        const pendingLogs: Omit<InventoryLog, 'id' | 'date'>[] = [];
+        const updatedInventory = normalizeInventoryRecords(inventory.map(invItem => {
+            const itemInTx = transaction.items.find(i => i.id === invItem.id && !i.isCustom && !i.isBuyback);
+            if (!itemInTx) return invItem;
+            const quantityChange = isReturn ? -itemInTx.quantity : itemInTx.quantity;
+            const newStock = isSerialTrackedItem(invItem)
+                ? clampSerialStock(invItem.stock + quantityChange)
+                : invItem.stock + quantityChange;
+            pendingLogs.push({
+                inventoryItemId: invItem.id,
+                productName: getProductName(invItem.productTypeId),
+                change: newStock - invItem.stock,
+                newQuantity: newStock,
+                reason: `Delete reversal: ${transaction.id}`,
+                referenceId: transaction.id,
+            });
+            return { ...invItem, stock: newStock };
+        }));
 
-    const getTransactionDeleteWarnings = (transactionId: string): { ok: boolean; warnings: string[] } | null => {
+        if (pendingLogs.length > 0) {
+            setInventory(updatedInventory);
+            pendingLogs.forEach(addInventoryLog);
+        }
+    }, [inventory, setInventory, addInventoryLog, getProductName]);
+
+    const getTransactionDeleteWarnings = useCallback((transactionId: string): { ok: boolean; warnings: string[] } | null => {
         const transaction = transactions.find(t => t.id === transactionId);
         if (!transaction) return null;
         return checkStockReversalForDelete(transaction);
-    };
+    }, [transactions, checkStockReversalForDelete]);
 
-    const deleteTransaction = (transactionId: string, userRole: UserRole, skipConfirm = false): boolean => {
+    const deleteTransaction = useCallback((transactionId: string, userRole: UserRole, skipConfirm = false): boolean => {
         const transaction = transactions.find(t => t.id === transactionId);
         if (!transaction) {
             addToast('Transaction not found.', 'error');
@@ -553,29 +619,29 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
 
         addToast('Transaction deleted.', 'warning');
         return true;
-    };
+    }, [transactions, setWarrantyLogs, setTransactions, reverseTransactionStock, addAuditLog, addToast]);
 
-    const updateTransactionCompliance = (transactionId: string, updates: Partial<Transaction>) => {
+    const updateTransactionCompliance = useCallback((transactionId: string, updates: Partial<Transaction>) => {
         setTransactions(prev => prev.map(t =>
             t.id === transactionId ? { ...t, ...updates } : t
         ));
-    };
+    }, [setTransactions]);
 
-    const addExpense = (newExpenseData: Omit<Expense, 'id'>) => {
+    const addExpense = useCallback((newExpenseData: Omit<Expense, 'id'>) => {
         const newExpense: Expense = { id: `EXP${Date.now()}`, ...newExpenseData };
         setExpenses(prev => [newExpense, ...prev].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
         addToast('Expense recorded successfully!', 'success');
-    };
+    }, [setExpenses, addToast]);
 
-    const updateExpense = (updatedExpense: Expense) => {
+    const updateExpense = useCallback((updatedExpense: Expense) => {
         setExpenses(prev => prev.map(exp => exp.id === updatedExpense.id ? updatedExpense : exp));
         addToast(`Expense ${updatedExpense.id} updated!`, 'info');
-    };
+    }, [setExpenses, addToast]);
 
-    const deleteExpense = (expenseId: string) => {
+    const deleteExpense = useCallback((expenseId: string) => {
         setExpenses(prev => prev.filter(exp => exp.id !== expenseId));
         addToast('Expense deleted!', 'warning');
-    };
+    }, [setExpenses, addToast]);
 
     const findBatchesForPurchaseItem = (purchase: Purchase, item: PurchaseItem, currentInventory: InventoryItem[]): InventoryItem[] => {
         if (item.serialNumbers && item.serialNumbers.length > 0) {
@@ -595,7 +661,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         );
     };
 
-    const applyPurchaseStock = (purchase: Purchase) => {
+    const applyPurchaseStock = useCallback((purchase: Purchase) => {
         if (purchase.status !== 'Received') return;
 
         purchase.items.forEach(item => {
@@ -617,9 +683,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 }, stockOptions);
             });
         });
-    };
+    }, [addStock]);
 
-    const revertPurchaseStock = (purchase: Purchase): boolean => {
+    const revertPurchaseStock = useCallback((purchase: Purchase): boolean => {
         if (purchase.status !== 'Received') return true;
 
         const purchaseLogs = inventoryLogs.filter(l => l.referenceId === purchase.id);
@@ -633,29 +699,29 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
                 }
             }
 
-            setInventory(prev => {
-                const updated = [...prev];
-                for (const log of purchaseLogs) {
-                    const idx = updated.findIndex(i => i.id === log.inventoryItemId);
-                    if (idx >= 0) {
-                        const newStock = updated[idx].stock - log.change;
-                        addInventoryLog({
-                            inventoryItemId: log.inventoryItemId,
-                            productName: log.productName,
-                            change: -log.change,
-                            newQuantity: newStock,
-                            reason: `Purchase reversal ${purchase.supplierInvoiceNumber || purchase.id}`,
-                            referenceId: purchase.id,
-                        });
-                        if (newStock <= 0 && updated[idx].serialNumber) {
-                            updated.splice(idx, 1);
-                        } else {
-                            updated[idx] = { ...updated[idx], stock: Math.max(0, newStock) };
-                        }
+            const working = [...inventory];
+            const pendingLogs: Omit<InventoryLog, 'id' | 'date'>[] = [];
+            for (const log of purchaseLogs) {
+                const idx = working.findIndex(i => i.id === log.inventoryItemId);
+                if (idx >= 0) {
+                    const newStock = working[idx].stock - log.change;
+                    pendingLogs.push({
+                        inventoryItemId: log.inventoryItemId,
+                        productName: log.productName,
+                        change: -log.change,
+                        newQuantity: newStock,
+                        reason: `Purchase reversal ${purchase.supplierInvoiceNumber || purchase.id}`,
+                        referenceId: purchase.id,
+                    });
+                    if (newStock <= 0 && working[idx].serialNumber) {
+                        working.splice(idx, 1);
+                    } else {
+                        working[idx] = { ...working[idx], stock: Math.max(0, newStock) };
                     }
                 }
-                return updated.filter(i => i.stock > 0 || !i.serialNumber);
-            });
+            }
+            setInventory(working.filter(i => i.stock > 0 || !i.serialNumber));
+            pendingLogs.forEach(addInventoryLog);
             return true;
         }
 
@@ -669,37 +735,37 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             }
         }
 
-        setInventory(prev => {
-            let updated = [...prev];
-            purchase.items.forEach(item => {
-                const batches = findBatchesForPurchaseItem(purchase, item, updated);
-                let remaining = item.serialNumbers?.length || item.quantity;
-                for (const batch of batches) {
-                    if (remaining <= 0) break;
-                    const idx = updated.findIndex(i => i.id === batch.id);
-                    if (idx < 0) continue;
-                    const reduction = Math.min(remaining, updated[idx].stock);
-                    const newStock = updated[idx].stock - reduction;
-                    addInventoryLog({
-                        inventoryItemId: batch.id,
-                        productName: getProductName(batch.productTypeId),
-                        change: -reduction,
-                        newQuantity: newStock,
-                        reason: `Purchase reversal ${purchase.supplierInvoiceNumber || purchase.id}`,
-                        referenceId: purchase.id,
-                    });
-                    if (newStock <= 0 && updated[idx].serialNumber) {
-                        updated.splice(idx, 1);
-                    } else {
-                        updated[idx] = { ...updated[idx], stock: newStock };
-                    }
-                    remaining -= reduction;
+        const working = [...inventory];
+        const pendingLogs: Omit<InventoryLog, 'id' | 'date'>[] = [];
+        purchase.items.forEach(item => {
+            const batches = findBatchesForPurchaseItem(purchase, item, working);
+            let remaining = item.serialNumbers?.length || item.quantity;
+            for (const batch of batches) {
+                if (remaining <= 0) break;
+                const idx = working.findIndex(i => i.id === batch.id);
+                if (idx < 0) continue;
+                const reduction = Math.min(remaining, working[idx].stock);
+                const newStock = working[idx].stock - reduction;
+                pendingLogs.push({
+                    inventoryItemId: batch.id,
+                    productName: getProductName(batch.productTypeId),
+                    change: -reduction,
+                    newQuantity: newStock,
+                    reason: `Purchase reversal ${purchase.supplierInvoiceNumber || purchase.id}`,
+                    referenceId: purchase.id,
+                });
+                if (newStock <= 0 && working[idx].serialNumber) {
+                    working.splice(idx, 1);
+                } else {
+                    working[idx] = { ...working[idx], stock: newStock };
                 }
-            });
-            return updated.filter(i => i.stock > 0 || !i.serialNumber);
+                remaining -= reduction;
+            }
         });
+        setInventory(working.filter(i => i.stock > 0 || !i.serialNumber));
+        pendingLogs.forEach(addInventoryLog);
         return true;
-    };
+    }, [inventory, inventoryLogs, setInventory, addInventoryLog, getProductName, addToast]);
 
     const purchaseItemsEqual = (a: PurchaseItem[], b: PurchaseItem[]) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -708,7 +774,7 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         original.date !== updated.date ||
         !purchaseItemsEqual(original.items, updated.items);
 
-    const addPurchase = (newPurchase: Omit<Purchase, 'id'>) => {
+    const addPurchase = useCallback((newPurchase: Omit<Purchase, 'id'>) => {
         const purchase: Purchase = { ...newPurchase, id: `PUR${Date.now()}` };
         setPurchases(prev => [purchase, ...prev]);
 
@@ -716,9 +782,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
             applyPurchaseStock(purchase);
         }
         addToast('Purchase invoice recorded and stock added!', 'success');
-    };
+    }, [setPurchases, applyPurchaseStock, addToast]);
 
-    const importPurchases = (drafts: Omit<Purchase, 'id'>[]) => {
+    const importPurchases = useCallback((drafts: Omit<Purchase, 'id'>[]) => {
         if (drafts.length === 0) return 0;
         const imported: Purchase[] = drafts.map((draft, idx) => ({
             ...draft,
@@ -728,9 +794,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         imported.filter(p => p.status === 'Received').forEach(applyPurchaseStock);
         addToast(`Imported ${imported.length} purchase bill${imported.length === 1 ? '' : 's'}.`, 'success');
         return imported.length;
-    };
+    }, [setPurchases, applyPurchaseStock, addToast]);
 
-    const addPurchaseInvoiceUpload = (upload: Omit<PurchaseInvoiceUpload, 'id' | 'capturedAt'>) => {
+    const addPurchaseInvoiceUpload = useCallback((upload: Omit<PurchaseInvoiceUpload, 'id' | 'capturedAt'>) => {
         const entry: PurchaseInvoiceUpload = {
             ...upload,
             id: `PIU${Date.now()}`,
@@ -739,13 +805,13 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         setPurchaseInvoiceQueue(prev => [entry, ...prev]);
         addToast('Invoice photo uploaded.', 'success');
         return entry.id;
-    };
+    }, [setPurchaseInvoiceQueue, addToast]);
 
-    const removePurchaseInvoiceUpload = (uploadId: string) => {
+    const removePurchaseInvoiceUpload = useCallback((uploadId: string) => {
         setPurchaseInvoiceQueue(prev => prev.filter(item => item.id !== uploadId));
-    };
+    }, [setPurchaseInvoiceQueue]);
 
-    const updatePurchase = (updatedPurchase: Purchase) => {
+    const updatePurchase = useCallback((updatedPurchase: Purchase) => {
         const original = purchases.find(p => p.id === updatedPurchase.id);
         if (!original) {
             addToast('Purchase not found.', 'error');
@@ -765,9 +831,9 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
 
         addToast('Purchase details updated', 'info');
-    };
+    }, [purchases, setPurchases, revertPurchaseStock, applyPurchaseStock, addToast]);
 
-    const deletePurchase = (purchaseId: string, userRole: UserRole, skipConfirm = false): boolean => {
+    const deletePurchase = useCallback((purchaseId: string, userRole: UserRole, skipConfirm = false): boolean => {
         const purchase = purchases.find(p => p.id === purchaseId);
         if (!purchase) {
             addToast('Purchase not found.', 'error');
@@ -796,20 +862,20 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
         addToast('Purchase deleted.', 'warning');
         return true;
-    };
+    }, [purchases, setPurchases, revertPurchaseStock, applyPurchaseStock, addAuditLog, addToast]);
 
-    const addPaymentVoucher = (voucher: Omit<PaymentVoucher, 'id'>) => {
+    const addPaymentVoucher = useCallback((voucher: Omit<PaymentVoucher, 'id'>) => {
         const newVoucher: PaymentVoucher = { ...voucher, id: `VCH${Date.now()}` };
         setPaymentVouchers(prev => [newVoucher, ...prev]);
         addToast(voucher.type === 'Receipt' ? 'Payment received!' : 'Payment made!', 'success');
-    };
+    }, [setPaymentVouchers, addToast]);
 
-    const deletePaymentVoucher = (id: string) => {
+    const deletePaymentVoucher = useCallback((id: string) => {
         setPaymentVouchers(prev => prev.filter(v => v.id !== id));
         addToast('Voucher deleted', 'warning');
-    };
+    }, [setPaymentVouchers, addToast]);
 
-    const saveDailyClose = (close: Omit<DailyClose, 'id' | 'closedAt'>): DailyClose => {
+    const saveDailyClose = useCallback((close: Omit<DailyClose, 'id' | 'closedAt'>): DailyClose => {
         const entry: DailyClose = {
             ...close,
             id: `DC-${Date.now()}`,
@@ -821,14 +887,14 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
         addToast(`Day closed for ${new Date(close.date).toLocaleDateString('en-IN')}`, 'success');
         return entry;
-    };
+    }, [setDailyCloses, addToast]);
 
-    const reopenDailyClose = (date: string, firmId?: string) => {
+    const reopenDailyClose = useCallback((date: string, firmId?: string) => {
         setDailyCloses(prev => prev.filter(c => !(c.date === date && (c.firmId || 'all') === (firmId || 'all'))));
         addToast(`Reopened ${new Date(date).toLocaleDateString('en-IN')} for edits`, 'info');
-    };
+    }, [setDailyCloses, addToast]);
 
-    const saveMonthlyClose = (close: Omit<MonthlyClose, 'id' | 'closedAt'>): MonthlyClose => {
+    const saveMonthlyClose = useCallback((close: Omit<MonthlyClose, 'id' | 'closedAt'>): MonthlyClose => {
         const entry: MonthlyClose = {
             ...close,
             id: `MC-${Date.now()}`,
@@ -840,14 +906,14 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
         addToast(`Month closed for ${close.month}/${close.year}`, 'success');
         return entry;
-    };
+    }, [setMonthlyCloses, addToast]);
 
-    const reopenMonthlyClose = (year: number, month: number) => {
+    const reopenMonthlyClose = useCallback((year: number, month: number) => {
         setMonthlyCloses(prev => prev.filter(c => !(c.year === year && c.month === month)));
         addToast(`Reopened ${month}/${year} for edits`, 'info');
-    };
+    }, [setMonthlyCloses, addToast]);
 
-    const saveYearlyClose = (close: Omit<YearlyClose, 'id' | 'closedAt'>): YearlyClose => {
+    const saveYearlyClose = useCallback((close: Omit<YearlyClose, 'id' | 'closedAt'>): YearlyClose => {
         const entry: YearlyClose = {
             ...close,
             id: `YC-${Date.now()}`,
@@ -859,31 +925,51 @@ export const AppDataProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
         addToast(`Year ${close.year} closed`, 'success');
         return entry;
-    };
+    }, [setYearlyCloses, addToast]);
 
-    const reopenYearlyClose = (year: number) => {
+    const reopenYearlyClose = useCallback((year: number) => {
         setYearlyCloses(prev => prev.filter(c => c.year !== year));
         addToast(`Reopened year ${year} for edits`, 'info');
-    };
+    }, [setYearlyCloses, addToast]);
+
+    // Memoized context value: transient toasts or unrelated mutations no
+    // longer recreate ~40 functions and re-render every consumer in the tree.
+    const contextValue = useMemo(() => ({
+        isLoading,
+        inventory, addStock, updateStockQuantity, updateBatchDetails, deleteBatch, adjustStock, performStockTake,
+        scrapInventory, addScrapItem, markScrapSold,
+        serviceJobs, addServiceJob, updateServiceJob,
+        transactions, addTransaction, updateTransaction, deleteTransaction, getTransactionDeleteWarnings, updateTransactionCompliance,
+        warrantyLogs,
+        expenses, addExpense, updateExpense, deleteExpense,
+        inventoryLogs,
+        purchases, addPurchase, importPurchases, updatePurchase, deletePurchase,
+        purchaseInvoiceQueue, addPurchaseInvoiceUpload, removePurchaseInvoiceUpload,
+        paymentVouchers, addPaymentVoucher, deletePaymentVoucher,
+        auditLogs,
+        dailyCloses, saveDailyClose, reopenDailyClose,
+        monthlyCloses, saveMonthlyClose, reopenMonthlyClose,
+        yearlyCloses, saveYearlyClose, reopenYearlyClose,
+    }), [
+        isLoading,
+        inventory, addStock, updateStockQuantity, updateBatchDetails, deleteBatch, adjustStock, performStockTake,
+        scrapInventory, addScrapItem, markScrapSold,
+        serviceJobs, addServiceJob, updateServiceJob,
+        transactions, addTransaction, updateTransaction, deleteTransaction, getTransactionDeleteWarnings, updateTransactionCompliance,
+        warrantyLogs,
+        expenses, addExpense, updateExpense, deleteExpense,
+        inventoryLogs,
+        purchases, addPurchase, importPurchases, updatePurchase, deletePurchase,
+        purchaseInvoiceQueue, addPurchaseInvoiceUpload, removePurchaseInvoiceUpload,
+        paymentVouchers, addPaymentVoucher, deletePaymentVoucher,
+        auditLogs,
+        dailyCloses, saveDailyClose, reopenDailyClose,
+        monthlyCloses, saveMonthlyClose, reopenMonthlyClose,
+        yearlyCloses, saveYearlyClose, reopenYearlyClose,
+    ]);
 
     return (
-        <AppDataContext.Provider value={{
-            isLoading,
-            inventory, addStock, updateStockQuantity, updateBatchDetails, deleteBatch, adjustStock, performStockTake,
-            scrapInventory, addScrapItem, markScrapSold,
-            serviceJobs, addServiceJob, updateServiceJob,
-            transactions, addTransaction, updateTransaction, deleteTransaction, getTransactionDeleteWarnings, updateTransactionCompliance,
-            warrantyLogs,
-            expenses, addExpense, updateExpense, deleteExpense,
-            inventoryLogs,
-            purchases, addPurchase, importPurchases, updatePurchase, deletePurchase,
-            purchaseInvoiceQueue, addPurchaseInvoiceUpload, removePurchaseInvoiceUpload,
-            paymentVouchers, addPaymentVoucher, deletePaymentVoucher,
-            auditLogs,
-            dailyCloses, saveDailyClose, reopenDailyClose,
-            monthlyCloses, saveMonthlyClose, reopenMonthlyClose,
-            yearlyCloses, saveYearlyClose, reopenYearlyClose,
-        }}>
+        <AppDataContext.Provider value={contextValue}>
             {children}
         </AppDataContext.Provider>
     );

@@ -35,7 +35,7 @@ export const INDIAN_STATES: { code: string; name: string; shortCode: string }[] 
     { code: '34', name: 'Puducherry', shortCode: 'PY' },
     { code: '35', name: 'Andaman & Nicobar Islands', shortCode: 'AN' },
     { code: '36', name: 'Telangana', shortCode: 'TS' },
-    { code: '37', name: 'Andhra Pradesh', shortCode: 'AD' },
+    { code: '37', name: 'Andhra Pradesh', shortCode: 'AP' },
     { code: '38', name: 'Ladakh', shortCode: 'LA' },
 ];
 
@@ -58,16 +58,38 @@ export const COMMON_HSN_CODES: { code: string; description: string; gstRate: num
 /** Default HSN when a line item / product has none set (lead-acid batteries). */
 export const DEFAULT_BATTERY_HSN = COMMON_HSN_CODES[0].code;
 
-/** Split an already-computed tax amount into CGST/SGST or IGST. */
+/** Look up the statutory GST rate for an HSN code (undefined when unknown). */
+export function getGstRateForHsn(hsnCode?: string): number | undefined {
+    if (!hsnCode) return undefined;
+    const entry = COMMON_HSN_CODES.find(h => h.code === hsnCode);
+    return entry?.gstRate;
+}
+
+/**
+ * Round to paise, half-away-from-zero. GST figures must be paise-exact so
+ * invoice components reconcile with GSTR totals.
+ */
+export function roundPaise(n: number): number {
+    const r = Math.sign(n) * Math.round(Math.abs(n) * 100) / 100;
+    return r === 0 ? 0 : r; // normalize -0 so equality checks behave
+}
+
+/**
+ * Split an already-computed tax amount into CGST/SGST or IGST.
+ * CGST is rounded to the paisa and SGST carries the remainder, so the halves
+ * always sum EXACTLY back to the total (₹10.01 → 5.005 → CGST 5.01 + SGST 5.00).
+ */
 export function splitTaxAmount(
     taxAmount: number,
     isInterstate: boolean
 ): { cgst: number; sgst: number; igst: number; total: number } {
+    const total = roundPaise(taxAmount);
     if (isInterstate) {
-        return { cgst: 0, sgst: 0, igst: taxAmount, total: taxAmount };
+        return { cgst: 0, sgst: 0, igst: total, total };
     }
-    const halfTax = taxAmount / 2;
-    return { cgst: halfTax, sgst: halfTax, igst: 0, total: taxAmount };
+    const cgst = roundPaise(total / 2);
+    const sgst = roundPaise(total - cgst);
+    return { cgst, sgst, igst: 0, total };
 }
 
 // Utility: Convert number to Indian words (Lakhs/Crores)
@@ -140,12 +162,6 @@ export function calculateGSTSplit(
     gstRate: number,
     isInterstate: boolean
 ): { cgst: number; sgst: number; igst: number; total: number } {
-    const totalTax = amount * (gstRate / 100);
-
-    if (isInterstate) {
-        return { cgst: 0, sgst: 0, igst: totalTax, total: totalTax };
-    } else {
-        const halfTax = totalTax / 2;
-        return { cgst: halfTax, sgst: halfTax, igst: 0, total: totalTax };
-    }
+    const totalTax = roundPaise(amount * (gstRate / 100));
+    return splitTaxAmount(totalTax, isInterstate);
 }

@@ -3,6 +3,7 @@ import { LOYALTY_POINTS_EARN_RATE, LOYALTY_POINT_VALUE } from '../constants.ts';
 import { InventoryItem, Transaction, ProductType } from '../types.ts';
 import { IconX, IconPrint } from './icons.tsx';
 import { useConfig } from '../context/ConfigContext.tsx';
+import { useAppData } from '../context/AppDataContext.tsx';
 import { inferSaleCategoryFromProduct, getCategorySectionLabels } from '../utils/saleCategory.ts';
 import { useMasterData } from '../context/MasterDataContext.tsx';
 import { getCustomerTier, getTierDiscountPercent, getCustomPriceForProduct, wouldExceedCreditLimit, makeCustomerId } from '../utils/customerPricing.ts';
@@ -10,8 +11,10 @@ import { getSaleQueue, clearSaleQueue } from '../utils/mobileSaleQueue.ts';
 import { lookupByBarcode } from '../utils/inventoryLookup.ts';
 import { isSerialTrackedItem, validateUniqueCartSerials, parseTransactionSerials, serialsForQuantity } from '../utils/serialNumbers.ts';
 import { buildCustomerIndex, searchCustomers, findCustomerByPhone, CustomerRecord } from '../utils/customerLookup.ts';
-import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '../utils/saleDraft.ts';
+import { saveSaleDraft, loadValidatedSaleDraft, clearSaleDraft } from '../utils/saleDraft.ts';
 import { computeSaleTotals, computeBaseBeforeOverallDiscount, deriveOverallDiscountFromFinal } from '../utils/salePricing.ts';
+import { getGstRateForHsn, getStateCodeFromGSTIN, isInterstateTransaction } from '../indianGST.ts';
+import { computeCustomerFinancials } from '../utils/customerStats.ts';
 import { consumeSaleCustomerPrefill } from '../utils/pageActions.ts';
 import { getLastPaymentMethod, saveLastPaymentMethod, PaymentMethod } from '../utils/salePrefs.ts';
 import { useBarcodeWedge } from '../hooks/useBarcodeWedge.ts';
@@ -52,6 +55,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
     onAddSale, onUpdateSale, onClose, onViewReceipt, onStepChange,
 }) => {
     const { config, defaultFirm } = useConfig();
+    const { paymentVouchers } = useAppData();
     const { getCustomerProfile } = useMasterData();
     const searchInputRef = useRef<HTMLInputElement>(null);
     const [selectedFirmId, setSelectedFirmId] = useState(config.preferences.defaultFirmId);
@@ -115,6 +119,9 @@ export const SalesForm: React.FC<SalesFormProps> = ({
     const { addToast } = useToast();
     const mobileQueueLoaded = useRef(false);
     const draftLoaded = useRef(false);
+    // Set the moment the user (or a restored draft) deliberately chooses a
+    // payment amount, so total changes stop snapping it back to full.
+    const paymentTouchedRef = useRef(false);
 
     const customerIndex = useMemo(() => buildCustomerIndex(transactions), [transactions]);
     const customerSuggestions = useMemo(
@@ -190,7 +197,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
             setCart(restoredCart);
         } else if (!draftLoaded.current) {
             const customerPrefill = consumeSaleCustomerPrefill();
-            const draft = loadSaleDraft();
+            const draft = loadValidatedSaleDraft();
             if (customerPrefill) {
                 draftLoaded.current = true;
                 setCustomerName(customerPrefill.customerName);
@@ -218,6 +225,9 @@ export const SalesForm: React.FC<SalesFormProps> = ({
                 setPlaceOfSupply(draft.placeOfSupply);
                 setCart(draft.cart as CartItem[]);
                 setPayments(draft.payments as Payment[]);
+                // A restored partial payment is a deliberate choice — never let
+                // the auto-fill effect snap it to the full total.
+                if (draft.payments.some(p => (p as Payment).amount > 0)) paymentTouchedRef.current = true;
                 setNotes(draft.notes);
                 setWizardStep(draft.wizardStep as WizardStep);
                 if (draft.overallDiscount) setOverallDiscount(draft.overallDiscount);
@@ -245,6 +255,14 @@ export const SalesForm: React.FC<SalesFormProps> = ({
 
     const pointsRedemptionValue = loyaltySettings.enabled ? loyaltySettings.redemptionValue : 0;
 
+    // Place of supply: derived from buyer vs seller GSTIN state codes when
+    // both are known — drives CGST+SGST vs IGST everywhere downstream.
+    const interstateSale = useMemo(() => {
+        const buyerState = getStateCodeFromGSTIN(customerGst || '');
+        const sellerState = getStateCodeFromGSTIN(activeFirm?.shopDetails.gstin || '');
+        return !!(buyerState && sellerState && isInterstateTransaction(sellerState, buyerState));
+    }, [customerGst, activeFirm]);
+
     const totals: SaleTotals = useMemo(() => computeSaleTotals({
         cart,
         overallDiscount,
@@ -258,7 +276,8 @@ export const SalesForm: React.FC<SalesFormProps> = ({
         pricingMode,
         isReturnMode,
         clubBuybackWithDiscount,
-    }), [cart, overallDiscount, taxRegime, activeFirm?.financials.gstRate, additionalCharges, pointsToRedeem, pointsRedemptionValue, finalPriceOverride, finalPriceLocked, pricingMode, isReturnMode, clubBuybackWithDiscount]);
+        isInterstate: interstateSale,
+    }), [cart, overallDiscount, taxRegime, activeFirm?.financials.gstRate, additionalCharges, pointsToRedeem, pointsRedemptionValue, finalPriceOverride, finalPriceLocked, pricingMode, isReturnMode, clubBuybackWithDiscount, interstateSale]);
 
     useEffect(() => {
         if (pricingMode !== 'final-drives' || !finalPriceLocked || finalPriceOverride === null) return;
@@ -270,30 +289,35 @@ export const SalesForm: React.FC<SalesFormProps> = ({
     const { total } = totals;
 
     useEffect(() => {
-        if (!transactionToEdit && payments.length === 1 && !viewMode) {
+        if (!transactionToEdit && payments.length === 1 && !viewMode && !paymentTouchedRef.current) {
             setPayments(prev => [{ ...prev[0], amount: Math.abs(total) }]);
         }
     }, [total, transactionToEdit, viewMode, payments.length]);
 
     useEffect(() => {
         if (customerName && customerPhone) {
+            const idKey = `${customerName.toLowerCase().trim()}|${customerPhone.trim()}`;
+            const relevantVouchers = paymentVouchers.filter(v => v.partyType === 'Customer' && v.partyId === idKey);
+            const financials = computeCustomerFinancials(
+                transactions.filter(t => t.customerName === customerName && t.customerPhone === customerPhone),
+                relevantVouchers,
+                loyaltySettings
+            );
             const customerTransactions = transactions.filter(t => t.customerName === customerName && t.customerPhone === customerPhone && t.status !== 'Quotation');
             if (customerTransactions.length > 0) {
-                const totalSpent = customerTransactions.reduce((sum, t) => sum + t.total, 0);
-                const dueTransactions = customerTransactions.filter(t => t.status === 'Due');
-                const totalDue = dueTransactions.reduce((sum, t) => sum + (t.total - t.payments.reduce((pSum, p) => pSum + p.amount, 0)), 0);
-                const lastSeen = customerTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0].date;
-                let earnedPoints = 0, usedPoints = 0;
+                const lastSeen = [...customerTransactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0].date;
+                let usedPoints = 0;
                 customerTransactions.forEach(t => {
-                    if (loyaltySettings.enabled && loyaltySettings.earnRate > 0) earnedPoints += Math.floor(t.total / loyaltySettings.earnRate);
                     usedPoints += (t.redeemedPoints || 0);
                 });
                 if (transactionToEdit?.redeemedPoints) usedPoints -= transactionToEdit.redeemedPoints;
-                const loyaltyPoints = Math.max(0, earnedPoints - usedPoints);
-                const tier = getCustomerTier(totalSpent, loyaltySettings.tiers);
+                // Shared aggregation: returns claw points back via financials;
+                // only THIS transaction's pending redemption is excluded.
+                const loyaltyPoints = Math.max(0, financials.loyaltyPoints + (transactionToEdit?.redeemedPoints ?? 0));
+                const tier = getCustomerTier(financials.totalSpent, loyaltySettings.tiers);
                 const tierDiscountPercent = getTierDiscountPercent(tier, loyaltySettings);
                 const profile = getCustomerProfile(makeCustomerId(customerName, customerPhone));
-                setSelectedCustomerData({ totalSpent, totalDue, lastSeen, loyaltyPoints, tier, creditLimit: profile?.creditLimit, tierDiscountPercent });
+                setSelectedCustomerData({ totalSpent: financials.totalSpent, totalDue: financials.totalDue, lastSeen, loyaltyPoints, tier, creditLimit: profile?.creditLimit, tierDiscountPercent });
                 if (tierDiscountPercent > 0 && !transactionToEdit && overallDiscount.value === 0 && !finalPriceLocked) {
                     setOverallDiscount({ type: 'percentage', value: tierDiscountPercent });
                 }
@@ -304,7 +328,7 @@ export const SalesForm: React.FC<SalesFormProps> = ({
         } else {
             setSelectedCustomerData(null);
         }
-    }, [customerName, customerPhone, transactions, transactionToEdit, loyaltySettings, getCustomerProfile, overallDiscount.value, finalPriceLocked]);
+    }, [customerName, customerPhone, transactions, paymentVouchers, transactionToEdit, loyaltySettings, getCustomerProfile, overallDiscount.value, finalPriceLocked]);
 
     const handleOverallDiscountChange: React.Dispatch<React.SetStateAction<{ type: 'percentage' | 'fixed'; value: number }>> = (updater) => {
         setPricingMode('discount-drives');
@@ -426,6 +450,8 @@ export const SalesForm: React.FC<SalesFormProps> = ({
             itemId: itemToAdd.id, name: itemToAdd.fullName, quantity: 1, price,
             purchasePrice: itemToAdd.purchasePrice, maxStock: serialUnit ? 1 : itemToAdd.stock,
             serialNumbers: [matchedSerial || ''], isSerialUnit: serialUnit,
+            hsnCode: itemToAdd.productType?.hsnCode,
+            gstRate: getGstRateForHsn(itemToAdd.productType?.hsnCode),
             guaranteePeriodMonths: itemToAdd.productType?.defaultGuaranteeMonths || 0,
             warrantyPeriodMonths: itemToAdd.productType?.defaultWarrantyMonths || 0,
             discount: { type: 'fixed', value: 0 },
@@ -454,7 +480,12 @@ export const SalesForm: React.FC<SalesFormProps> = ({
         const queue = getSaleQueue();
         if (queue.length === 0) return;
         mobileQueueLoaded.current = true;
-        if (queue[0]?.firmId) setSelectedFirmId(queue[0].firmId);
+        // Queue items stamp the SHARED-inventory firm id, which matches no
+        // real firm — only honour ids that exist, else keep the default firm.
+        const queueFirmId = queue[0]?.firmId;
+        if (queueFirmId && config.firms.some(f => f.id === queueFirmId)) {
+            setSelectedFirmId(queueFirmId);
+        }
         queue.forEach(q => {
             const inv = inventory.find(i => i.id === q.inventoryItemId);
             if (inv && inv.stock > 0) addInventoryToCart(inv, q.serialNumber ?? q.scannedCode);
@@ -494,18 +525,52 @@ export const SalesForm: React.FC<SalesFormProps> = ({
 
     useBarcodeWedge(!viewMode && !isReturnMode, handleBarcodeScan);
 
+    // Draft autosave: the latest form state is mirrored into a ref every render
+    // while the timer/effect stay dependency-stable. (The previous version put
+    // every field in the effect deps, so each keystroke restarted the 30s
+    // interval — a steadily-typed sale was never saved.) Flush on unmount,
+    // tab close and backgrounding so at most a few seconds of typing is lost.
+    const draftSnapshotRef = useRef({
+        selectedFirmId, saleDate, customerName, customerPhone, customerGst, billingAddress,
+        vehicleNumber, vehicleModel, saleCategory, placeOfSupply, cart, payments, notes,
+        wizardStep, overallDiscount, finalPriceOverride, finalPriceLocked, pricingMode,
+        clubBuybackWithDiscount,
+    });
+    draftSnapshotRef.current = {
+        selectedFirmId, saleDate, customerName, customerPhone, customerGst, billingAddress,
+        vehicleNumber, vehicleModel, saleCategory, placeOfSupply, cart, payments, notes,
+        wizardStep, overallDiscount, finalPriceOverride, finalPriceLocked, pricingMode,
+        clubBuybackWithDiscount,
+    };
+
     useEffect(() => {
-        if (!isNewSale || viewMode || cart.length === 0) return;
-        const timer = setInterval(() => {
+        if (!isNewSale || viewMode) return;
+        const writeDraft = () => {
+            const snap = draftSnapshotRef.current;
+            if (!snap.cart || snap.cart.length === 0) return;
             saveSaleDraft({
-                savedAt: new Date().toISOString(), selectedFirmId, saleDate, customerName, customerPhone,
-                customerGst, billingAddress, vehicleNumber, vehicleModel, saleCategory, placeOfSupply,
-                cart, payments, notes, wizardStep, overallDiscount, finalPriceOverride, finalPriceLocked,
-                pricingMode, clubBuybackWithDiscount,
+                savedAt: new Date().toISOString(), selectedFirmId: snap.selectedFirmId,
+                saleDate: snap.saleDate, customerName: snap.customerName, customerPhone: snap.customerPhone,
+                customerGst: snap.customerGst, billingAddress: snap.billingAddress,
+                vehicleNumber: snap.vehicleNumber, vehicleModel: snap.vehicleModel,
+                saleCategory: snap.saleCategory, placeOfSupply: snap.placeOfSupply,
+                cart: snap.cart, payments: snap.payments, notes: snap.notes,
+                wizardStep: snap.wizardStep, overallDiscount: snap.overallDiscount,
+                finalPriceOverride: snap.finalPriceOverride, finalPriceLocked: snap.finalPriceLocked,
+                pricingMode: snap.pricingMode, clubBuybackWithDiscount: snap.clubBuybackWithDiscount,
             });
-        }, 30000);
-        return () => clearInterval(timer);
-    }, [isNewSale, viewMode, cart, selectedFirmId, saleDate, customerName, customerPhone, customerGst, billingAddress, vehicleNumber, vehicleModel, saleCategory, placeOfSupply, payments, notes, wizardStep, overallDiscount, finalPriceOverride, finalPriceLocked, pricingMode, clubBuybackWithDiscount]);
+        };
+        const timer = setInterval(writeDraft, 15_000);
+        const flush = () => writeDraft();
+        window.addEventListener('pagehide', flush);
+        document.addEventListener('visibilitychange', flush);
+        return () => {
+            clearInterval(timer);
+            window.removeEventListener('pagehide', flush);
+            document.removeEventListener('visibilitychange', flush);
+            flush();
+        };
+    }, [isNewSale, viewMode]);
 
     const handleAddItem = () => {
         const query = itemSearchQuery.trim();
@@ -559,8 +624,10 @@ export const SalesForm: React.FC<SalesFormProps> = ({
     const handleRemoveItem = (itemId: string) => setCart(prev => prev.filter(item => item.itemId !== itemId));
     const handleAddPayment = () => setPayments(prev => [...prev, { id: Date.now(), method: getLastPaymentMethod(), amount: amountDue > 0 ? amountDue : 0 }]);
     const handleRemovePayment = (id: number) => { if (payments.length > 1) setPayments(prev => prev.filter(p => p.id !== id)); };
-    const handleUpdatePayment = (id: number, field: 'method' | 'amount', value: string | number) =>
+    const handleUpdatePayment = (id: number, field: 'method' | 'amount', value: string | number) => {
+        if (field === 'amount') paymentTouchedRef.current = true;
         setPayments(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+    };
     const handleSetFullPayment = (id: number) => {
         const otherPayments = payments.filter(p => p.id !== id).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
         handleUpdatePayment(id, 'amount', Math.max(0, Math.abs(total) - otherPayments));
@@ -624,21 +691,44 @@ export const SalesForm: React.FC<SalesFormProps> = ({
 
     const executeSave = (saveAs: 'sale' | 'quotation', finalPayments: { method: string; amount: number }[], finalDue: number) => {
         const finalStatus: 'Paid' | 'Due' | 'Quotation' = saveAs === 'quotation' ? 'Quotation' : (finalDue <= 0.01 ? 'Paid' : 'Due');
+        const isReturn = isReturnMode || transactionToEdit?.type === 'Return';
         const saleData = {
             firmId: selectedFirmId, invoiceNumber: invoiceNumber.trim() || undefined,
-            type: isReturnMode ? 'Return' as const : 'Sale' as const,
+            type: isReturn ? 'Return' as const : 'Sale' as const,
             originalTransactionId: transactionToReturn?.id,
             customerName, customerPhone, customerGst, billingAddress, vehicleNumber, vehicleModel,
-            saleCategory: saleCategory || undefined, additionalCharges,
+            saleCategory: saleCategory || undefined,
+            additionalCharges: {
+                ...additionalCharges,
+                amount: isReturn ? Math.abs(additionalCharges.amount) : additionalCharges.amount,
+            },
             paymentDueDate: finalStatus === 'Due' ? paymentDueDate : undefined,
             date: new Date(saleDate).toISOString(),
-            items: cart.map(({ itemId, name, quantity, price, purchasePrice, serialNumbers, isBuyback, isCustom, guaranteePeriodMonths, warrantyPeriodMonths, discount, buybackBrand, buybackCapacity, buybackSerialNumber, specifications, notes }) => ({
-                id: itemId, name, quantity, price, purchasePrice, serialNumbers: serialNumbers.join(', '),
+            items: cart.map(({ itemId, name, quantity, price, purchasePrice, serialNumbers, isBuyback, isCustom, guaranteePeriodMonths, warrantyPeriodMonths, discount, buybackBrand, buybackCapacity, buybackSerialNumber, specifications, notes, hsnCode, gstRate }) => ({
+                id: itemId, name, quantity,
+                // Canonical storage convention for credit notes: POSITIVE
+                // magnitudes everywhere (total/tax/items/payments). Return mode
+                // negates prices internally to reuse the pricing engine, but
+                // every report helper flips direction off `type === 'Return'`
+                // and assumes positive values — storing negatives made a full
+                // refund INCREASE customer spend/dues and drawer balances.
+                price: isReturn ? Math.abs(price) : price,
+                purchasePrice, serialNumbers: serialNumbers.join(', '),
                 isBuyback, isCustom, guaranteePeriodMonths, warrantyPeriodMonths, discount,
                 buybackBrand, buybackCapacity, buybackSerialNumber, specifications, notes,
+                hsnCode, gstRate,
             })),
-            subtotal: totals.itemsTotal, discount: overallDiscount, redeemedPoints: pointsToRedeem,
-            taxRegime, taxAmount: totals.taxAmount, total, payments: finalPayments, status: finalStatus, notes,
+            subtotal: isReturn ? Math.abs(totals.itemsTotal) : totals.itemsTotal,
+            discount: overallDiscount, redeemedPoints: pointsToRedeem,
+            taxRegime,
+            taxAmount: isReturn ? Math.abs(totals.taxAmount) : totals.taxAmount,
+            total: isReturn ? Math.abs(total) : total,
+            payments: finalPayments, status: finalStatus, notes,
+            placeOfSupply: interstateSale ? getStateCodeFromGSTIN(customerGst || '') || undefined : getStateCodeFromGSTIN(activeFirm.shopDetails.gstin || '') || undefined,
+            isInterstate: interstateSale,
+            totalCgst: isReturn && totals.totalCgst != null ? Math.abs(totals.totalCgst) : totals.totalCgst,
+            totalSgst: isReturn && totals.totalSgst != null ? Math.abs(totals.totalSgst) : totals.totalSgst,
+            totalIgst: isReturn && totals.totalIgst != null ? Math.abs(totals.totalIgst) : totals.totalIgst,
             priceIncludesTax: true, clubBuybackDiscount: clubBuybackWithDiscount,
         };
         clearSaleDraft();

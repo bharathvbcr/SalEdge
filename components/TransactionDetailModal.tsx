@@ -174,22 +174,23 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
 
     const handleGenerateEInvoice = async () => {
         setIsGeneratingEInvoice(true);
+        const mode = config.preferences.eInvoiceMode ?? 'mock';
         try {
             updateTransactionCompliance(tx.id, { eInvoiceStatus: 'Pending' });
-            const result = await generateEInvoice(transaction, {
-                apiKey: config.preferences.eInvoiceApiKey,
-                gspUrl: config.preferences.eInvoiceGspUrl,
-            });
+            const result = await generateEInvoice(transaction, mode);
             updateTransactionCompliance(tx.id, {
                 eInvoiceIrn: result.irn,
                 eInvoiceAckNo: result.ackNo,
                 eInvoiceAckDate: result.ackDate,
-                eInvoiceStatus: 'Generated',
+                eInvoiceStatus: result.status,
             });
-            addToast('E-Invoice IRN generated successfully!', 'success');
+            addToast(result.status === 'MockGenerated'
+                ? 'E-Invoice generated in MOCK mode — not filed with the IRP.'
+                : 'E-Invoice IRN generated successfully!', result.status === 'MockGenerated' ? 'info' : 'success');
         } catch (e) {
+            const message = e instanceof Error ? e.message : 'Unknown error';
             updateTransactionCompliance(tx.id, { eInvoiceStatus: 'Failed' });
-            addToast('E-Invoice generation failed.', 'error');
+            addToast(`E-Invoice generation failed: ${message}`, 'error');
         } finally {
             setIsGeneratingEInvoice(false);
         }
@@ -197,21 +198,22 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
 
     const handleGenerateEWayBill = async () => {
         setIsGeneratingEWayBill(true);
+        const mode = config.preferences.eInvoiceMode ?? 'mock';
         try {
             updateTransactionCompliance(tx.id, { eWayBillStatus: 'Pending' });
-            const result = await generateEWayBill(transaction, {
-                apiKey: config.preferences.eInvoiceApiKey,
-                gspUrl: config.preferences.eInvoiceGspUrl,
-            });
+            const result = await generateEWayBill(transaction, mode);
             updateTransactionCompliance(tx.id, {
                 eWayBillNo: result.eWayBillNo,
                 eWayBillDate: result.eWayBillDate,
-                eWayBillStatus: 'Generated',
+                eWayBillStatus: result.status,
             });
-            addToast('E-Way Bill generated successfully!', 'success');
+            addToast(result.status === 'MockGenerated'
+                ? 'E-Way Bill generated in MOCK mode — not filed with the portal.'
+                : 'E-Way Bill generated successfully!', result.status === 'MockGenerated' ? 'info' : 'success');
         } catch (e) {
+            const message = e instanceof Error ? e.message : 'Unknown error';
             updateTransactionCompliance(tx.id, { eWayBillStatus: 'Failed' });
-            addToast('E-Way Bill generation failed.', 'error');
+            addToast(`E-Way Bill generation failed: ${message}`, 'error');
         } finally {
             setIsGeneratingEWayBill(false);
         }
@@ -422,7 +424,10 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                         const buyerStateCode = tx.placeOfSupply || tx.customerGst?.substring(0, 2) || sellerStateCode;
                                         const isInterstate = isInterstateTransaction(sellerStateCode, buyerStateCode);
                                         const placeOfSupplyName = INDIAN_STATES.find(s => s.code === buyerStateCode)?.name;
-                                        const { cgst, sgst, igst } = splitTaxAmount(tx.taxAmount, isInterstate);
+                                        // Stored reconciled splits win; derive paise-exact halves otherwise.
+                                        const { cgst, sgst, igst } = (tx.totalCgst != null && tx.totalSgst != null)
+                                            ? { cgst: tx.totalCgst, sgst: tx.totalSgst, igst: tx.totalIgst ?? 0 }
+                                            : splitTaxAmount(tx.taxAmount, isInterstate);
                                         const taxPrefix = tx.priceIncludesTax ? '' : '+ ';
 
                                         return (
@@ -560,8 +565,11 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                         {tx.eInvoiceAckNo && (
                                             <p className="text-gray-500">Ack: {tx.eInvoiceAckNo} ({tx.eInvoiceAckDate ? new Date(tx.eInvoiceAckDate).toLocaleDateString() : ''})</p>
                                         )}
-                                        {requiresEInvoice(tx) && !tx.eInvoiceIrn && (
-                                            <p className="text-amber-600 mt-1">Required for B2B invoices ≥ ₹50,000</p>
+                                        {(tx.eInvoiceStatus === 'MockGenerated') && (
+                                            <p className="text-amber-600 mt-1">MOCK IRN — not filed with the IRP. Configure live GSP in Settings.</p>
+                                        )}
+                                        {requiresEInvoice(tx, config.preferences.eInvoiceMandateApplied ?? false) && !tx.eInvoiceIrn && (
+                                            <p className="text-amber-600 mt-1">Required for B2B invoices (turnover mandate enabled)</p>
                                         )}
                                     </div>
                                     <div>
@@ -611,7 +619,7 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ 
                                     </button>
                                 </>
                             )}
-                            {true && onDelete && (
+                            {onDelete && (
                                 <button type="button" onClick={() => onDelete?.(tx)} className="btn-sm btn-danger">
                                     Delete
                                 </button>

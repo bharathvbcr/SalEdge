@@ -46,9 +46,16 @@ function optionalNumber(val: unknown): number | undefined {
     return n;
 }
 
+// Hallucinated figures must never reach the books in one tap: amounts above
+// this ceiling are rejected outright (the UI offers forms for large entries).
+const MAX_ACTION_AMOUNT = Number(process.env.AI_MAX_ACTION_AMOUNT) || 1_000_000;
+
 function requirePositiveAmount(val: unknown, field: string): number {
     const n = Number(val);
     if (!Number.isFinite(n) || n <= 0) throw new Error(`Invalid ${field}.`);
+    if (n > MAX_ACTION_AMOUNT) {
+        throw new Error(`${field} exceeds the one-click action limit (${MAX_ACTION_AMOUNT}) — use the form instead.`);
+    }
     return n;
 }
 
@@ -227,14 +234,88 @@ export function parseChatResponseText(text: string): AiChatResult {
 
 export function parseJsonFromText(text: string): unknown {
     const trimmed = text.trim();
+
+    // Closed fences; also tolerate a TRUNCATED response that opened but never
+    // closed its fence.
     const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenceMatch ? fenceMatch[1].trim() : trimmed;
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
-    if (start === -1 || end === -1) {
-        throw new Error('AI response did not contain JSON.');
+    let candidate = fenceMatch ? fenceMatch[1].trim() : trimmed;
+    if (!fenceMatch && candidate.startsWith('```')) {
+        candidate = candidate.replace(/^```(?:json)?\s*/i, '');
     }
-    return JSON.parse(candidate.slice(start, end + 1));
+
+    if (candidate.includes('{')) {
+        try {
+            const start = candidate.indexOf('{');
+            const end = candidate.lastIndexOf('}');
+            if (start !== -1 && end > start) {
+                return JSON.parse(candidate.slice(start, end + 1));
+            }
+        } catch { /* fall through to balanced-brace repair */ }
+
+        // Last resort: parse the largest balanced {...} span, ignoring
+        // trailing prose after truncated JSON. Repair output can still be
+        // unparseable — surface a CLEAN error, never a raw SyntaxError.
+        const repaired = extractBalancedJson(candidate);
+        if (repaired !== null) {
+            try {
+                return JSON.parse(repaired);
+            } catch {
+                throw new Error('AI response did not contain valid JSON.');
+            }
+        }
+    }
+
+    throw new Error('AI response did not contain valid JSON.');
+}
+
+function extractBalancedJson(text: string): string | null {
+    const start = text.indexOf('{');
+    if (start === -1) return null;
+    const openStack: string[] = [];
+    let inString = false;
+    let escaped = false;
+    let closedAtIndex: number | null = null;
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (escaped) { escaped = false; continue; }
+        if (ch === '\\') { escaped = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') openStack.push('}');
+        else if (ch === '[') openStack.push(']');
+        else if (ch === '}' || ch === ']') {
+            // Tolerate mismatched closers from sloppy model output.
+            if (openStack[openStack.length - 1] === ch) openStack.pop();
+            if (openStack.length === 0 && closedAtIndex === null) closedAtIndex = i;
+        }
+    }
+
+    // A fully-closed object exists — return exactly it, ignoring trailing prose.
+    if (closedAtIndex !== null) {
+        return text.slice(start, closedAtIndex + 1);
+    }
+
+    // Unterminated structure (truncated generation): close every open
+    // container in reverse order so the caller gets partial data instead of a
+    // hard failure. Braces AND brackets are tracked — closing only braces
+    // leaves `[{...` syntactically invalid.
+    let repaired = text.slice(start);
+    if (inString) repaired += '"';
+    repaired = repaired.replace(/[:,\s]*$/, '');
+    repaired += openStack.reverse().join('');
+    return repaired;
+}
+
+// Bounds for LLM-supplied purchase figures: hallucinated or injected values
+// must be rejected before they reach the books.
+const MAX_QUANTITY = 10_000;
+const MAX_PRICE = 10_000_000;
+const MAX_TAX_RATE = 28.5; // highest Indian GST slab + margin
+const MAX_ITEMS = 500;
+
+function finiteNumber(value: unknown): number | undefined {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
 }
 
 export function validatePurchaseExtraction(raw: unknown): PurchaseExtractionResult {
@@ -242,47 +323,73 @@ export function validatePurchaseExtraction(raw: unknown): PurchaseExtractionResu
         throw new Error('Invalid extraction response.');
     }
     const obj = raw as Record<string, unknown>;
-    const confidence = obj.confidence;
-    if (confidence !== 'high' && confidence !== 'medium' && confidence !== 'low') {
+    // The LLM's self-reported confidence is not a quality signal — it is
+    // derived below from field completeness instead of trusted.
+    let confidence: 'high' | 'medium' | 'low';
+    if (obj.confidence === 'high' || obj.confidence === 'medium' || obj.confidence === 'low') {
+        confidence = obj.confidence;
+    } else {
         throw new Error('Invalid confidence level in extraction.');
     }
-    const itemsRaw = Array.isArray(obj.items) ? obj.items : [];
+    const itemsRaw = Array.isArray(obj.items) ? obj.items.slice(0, MAX_ITEMS) : [];
     const items = itemsRaw.map((item, idx) => {
         if (!item || typeof item !== 'object') {
             throw new Error(`Invalid item at index ${idx}.`);
         }
         const row = item as Record<string, unknown>;
         const description = String(row.description ?? '').trim();
-        const quantity = Number(row.quantity);
-        const unitPrice = Number(row.unitPrice);
+        const quantity = finiteNumber(row.quantity);
+        // Empty-string prices coerce to 0 — a "free" line item from the LLM.
+        const unitPrice = row.unitPrice === '' || row.unitPrice === null || row.unitPrice === undefined
+            ? undefined
+            : finiteNumber(row.unitPrice);
         if (!description) throw new Error(`Item ${idx + 1}: missing description.`);
-        if (!Number.isFinite(quantity) || quantity < 1) throw new Error(`Item ${idx + 1}: invalid quantity.`);
-        if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error(`Item ${idx + 1}: invalid unit price.`);
+        if (quantity === undefined || quantity < 1 || quantity > MAX_QUANTITY) {
+            throw new Error(`Item ${idx + 1}: invalid quantity.`);
+        }
+        if (unitPrice === undefined || unitPrice <= 0 || unitPrice > MAX_PRICE) {
+            throw new Error(`Item ${idx + 1}: invalid unit price.`);
+        }
+        const mrp = finiteNumber(row.mrp);
+        const taxRateRaw = finiteNumber(row.taxRate);
         return {
             description,
             quantity,
             unitPrice,
-            mrp: row.mrp !== undefined ? Number(row.mrp) : undefined,
-            taxRate: row.taxRate !== undefined ? Number(row.taxRate) : undefined,
+            mrp: mrp !== undefined ? Math.max(0, mrp) : undefined,
+            taxRate: taxRateRaw !== undefined ? Math.min(Math.max(0, taxRateRaw), MAX_TAX_RATE) : undefined,
             hsnCode: row.hsnCode ? String(row.hsnCode) : undefined,
             batchNumber: row.batchNumber ? String(row.batchNumber) : undefined,
         };
     });
 
-    const warnings = Array.isArray(obj.warnings) ? obj.warnings.map(w => String(w)) : [];
+    const warnings = Array.isArray(obj.warnings) ? obj.warnings.map(w => String(w)).slice(0, 20) : [];
+
+    // Derive confidence from completeness rather than trusting the model:
+    // missing supplier/date/lines downgrade whatever the LLM claimed.
+    const hasIdentity = !!(obj.supplierInvoiceNumber && obj.date);
+    const hasSupplier = !!obj.supplierName;
+    if (items.length === 0 || !hasSupplier) confidence = 'low';
+    else if (!hasIdentity && confidence === 'high') confidence = 'medium';
 
     return {
         supplierName: obj.supplierName ? String(obj.supplierName) : undefined,
-        supplierGstin: obj.supplierGstin ? String(obj.supplierGstin) : undefined,
+        supplierGstin: obj.supplierGstin ? String(obj.supplierGstin).toUpperCase() : undefined,
         supplierInvoiceNumber: obj.supplierInvoiceNumber ? String(obj.supplierInvoiceNumber) : undefined,
         date: obj.date ? String(obj.date) : undefined,
         items,
-        subtotal: obj.subtotal !== undefined ? Number(obj.subtotal) : undefined,
-        totalTax: obj.totalTax !== undefined ? Number(obj.totalTax) : undefined,
-        totalAmount: obj.totalAmount !== undefined ? Number(obj.totalAmount) : undefined,
+        subtotal: finiteOrUndefined(obj.subtotal),
+        totalTax: finiteOrUndefined(obj.totalTax),
+        totalAmount: finiteOrUndefined(obj.totalAmount),
         confidence,
         warnings,
     };
+}
+
+function finiteOrUndefined(value: unknown): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
 }
 
 export function validateInsights(raw: unknown): AiInsightsResult {

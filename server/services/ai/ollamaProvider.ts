@@ -3,7 +3,7 @@ import { CHAT_SYSTEM, INSIGHTS_SYSTEM, buildChatPrompt, buildInsightsPrompt, bui
 import { parseJsonFromText, parseChatResponseText, validateInsights, validatePurchaseExtraction } from './jsonUtils.js';
 import { buildChatRagChunks, buildInsightsRagChunks } from './ragChunks.js';
 import { checkSemanticLayerHealth, semanticLayerQuery } from './semanticLayerClient.js';
-import { clearOllamaModelCache, resolveOllamaModels, type ResolvedOllamaModels } from './ollamaModels.js';
+import { clearOllamaModelCache, isVisionCapableModel, resolveOllamaModels, type ResolvedOllamaModels } from './ollamaModels.js';
 import type { AiProvider, ResolvedAiSettings } from './types.js';
 
 interface OllamaChatResponse {
@@ -11,15 +11,21 @@ interface OllamaChatResponse {
     error?: string;
 }
 
+const CHAT_TIMEOUT_MS = 120_000;
+const VISION_TIMEOUT_MS = 180_000;
+
 async function ollamaChat(
     baseUrl: string,
     model: string,
     messages: { role: string; content: string; images?: string[] }[],
     options?: { jsonFormat?: boolean },
 ): Promise<string> {
+    const hasImages = messages.some(m => m.images && m.images.length > 0);
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // Bound generation so a wedged model load can't hang API requests.
+        signal: AbortSignal.timeout(hasImages ? VISION_TIMEOUT_MS : CHAT_TIMEOUT_MS),
         body: JSON.stringify({
             model,
             messages,
@@ -56,22 +62,13 @@ async function withSemanticFallback<T>(
     op: string,
 ): Promise<T> {
     if (!settings.semanticLayerEnabled) {
-        // #region agent log
-        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H7',location:'server/services/ai/ollamaProvider.ts:withSemanticFallback',message:'Semantic layer disabled — direct Ollama',data:{op,model:models.textModel,baseUrl:settings.ollamaBaseUrl},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         return directFn();
     }
     try {
         const result = await semanticFn();
-        // #region agent log
-        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H1',location:'server/services/ai/ollamaProvider.ts:withSemanticFallback',message:'Semantic layer path succeeded',data:{op},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         return result;
     } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        // #region agent log
-        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H1-H3',location:'server/services/ai/ollamaProvider.ts:withSemanticFallback',message:'Semantic fallback to direct Ollama',data:{op,error:errMsg,model:models.textModel,baseUrl:settings.ollamaBaseUrl},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         console.warn('Semantic layer unavailable, falling back to direct Ollama:', err);
         return directFn();
     }
@@ -103,18 +100,12 @@ export function createOllamaProvider(settings: ResolvedAiSettings): AiProvider {
 
                 const modelSummary = `Text: ${models.textModel}, Vision: ${models.visionModel} (${models.available.length} model${models.available.length === 1 ? '' : 's'} available).`;
                 const ollamaMsg = `Connected to Ollama. Using ${modelSummary}`;
-                // #region agent log
-                fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H2',location:'server/services/ai/ollamaProvider.ts:testConnection',message:'Ollama test connection OK',data:{baseUrl,models,semanticChecks:checks},timestamp:Date.now()})}).catch(()=>{});
-                // #endregion
                 return {
                     ok: true,
                     message: checks.length ? `${checks.join(' ')} ${ollamaMsg}` : ollamaMsg,
                 };
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : 'Ollama connection failed.';
-                // #region agent log
-                fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H2',location:'server/services/ai/ollamaProvider.ts:testConnection',message:'Ollama test connection failed',data:{baseUrl,error:errMsg},timestamp:Date.now()})}).catch(()=>{});
-                // #endregion
                 return { ok: false, message: errMsg };
             }
         },
@@ -122,6 +113,16 @@ export function createOllamaProvider(settings: ResolvedAiSettings): AiProvider {
         async extractPurchaseInvoice(imageBase64, mimeType, catalog): Promise<PurchaseExtractionResult> {
             void mimeType;
             const models = await resolveModels(settings);
+
+            // Sending an invoice to a TEXT-only model yields hallucinated
+            // bills that look legitimate — hard-fail instead.
+            if (!isVisionCapableModel(models.visionModel)) {
+                throw new Error(
+                    `No vision-capable Ollama model found (selected "${models.visionModel}" cannot read images). ` +
+                    'Install one, e.g.: ollama pull llama3.2-vision'
+                );
+            }
+
             const prompt = buildInvoiceExtractionPrompt(catalog);
             const text = await ollamaChat(baseUrl, models.visionModel, [
                 { role: 'user', content: prompt, images: [imageBase64] },

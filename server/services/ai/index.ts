@@ -27,9 +27,6 @@ export function resolveAiSettings(settings: AiSettings): ResolvedAiSettings {
         settings.provider === 'ollama'
         && parseBoolEnv(process.env.SEMANTIC_LAYER_ENABLED, true);
 
-    // #region agent log
-    fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H4-H7',location:'server/services/ai/index.ts:resolveAiSettings',message:'Resolved AI settings',data:{enabled:settings.enabled,provider:settings.provider,ollamaBaseUrl:settings.ollamaBaseUrl?.trim()||process.env.OLLAMA_BASE_URL?.trim()||'http://127.0.0.1:11434',ollamaVisionModel:settings.ollamaVisionModel?.trim()||'auto',ollamaTextModel:settings.ollamaTextModel?.trim()||'auto',semanticLayerEnabled,semanticLayerUrl,clientSemanticLayerEnabled:settings.semanticLayerEnabled},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     return {
         enabled: settings.enabled,

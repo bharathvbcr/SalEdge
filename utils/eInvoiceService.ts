@@ -1,4 +1,5 @@
 import { Transaction } from '../types.ts';
+import { api } from './api.ts';
 
 const IRN_REGEX = /^[a-f0-9]{64}$/i;
 const EWAY_BILL_REGEX = /^\d{12}$/;
@@ -33,56 +34,40 @@ function generateHash(input: string): string {
     return result;
 }
 
+export type EInvoiceMode = 'mock' | 'live';
+
 export type EInvoiceGenerateResult = {
     irn: string;
     ackNo: string;
     ackDate: string;
-    status: 'Generated';
+    /** 'MockGenerated' marks locally-fabricated identifiers that were never filed with the IRP. */
+    status: 'Generated' | 'MockGenerated';
 };
 
 export type EWayBillGenerateResult = {
     eWayBillNo: string;
     eWayBillDate: string;
-    status: 'Generated';
+    status: 'Generated' | 'MockGenerated';
 };
 
-export interface GspConfig {
-    apiKey?: string;
-    gspUrl?: string;
-}
-
-async function callGsp<T>(endpoint: string, transaction: Transaction, config: GspConfig): Promise<T> {
-    const base = config.gspUrl!.replace(/\/$/, '');
-    const res = await fetch(`${base}${endpoint}`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${config.apiKey}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ transaction }),
-    });
-    if (!res.ok) {
-        const err = await res.text().catch(() => res.statusText);
-        throw new Error(`GSP error (${res.status}): ${err}`);
-    }
-    return res.json() as Promise<T>;
-}
-
+/**
+ * Generate an IRN. In 'live' mode the request is proxied through the app's own
+ * server (which holds the GSP credentials) and ANY failure throws loudly —
+ * a failed GSP call must never silently degrade to fabricated legal
+ * documents. Mock mode returns distinctly-marked sandbox data.
+ */
 export async function generateEInvoice(
     transaction: Transaction,
-    config?: GspConfig
+    mode: EInvoiceMode = 'mock'
 ): Promise<EInvoiceGenerateResult> {
-    if (config?.apiKey && config?.gspUrl) {
-        try {
-            const result = await callGsp<EInvoiceGenerateResult>('/einvoice/generate', transaction, config);
-            if (!isValidIrn(result.irn)) throw new Error('GSP returned invalid IRN format');
-            if (!isValidAckNo(result.ackNo)) throw new Error('GSP returned invalid Ack No format');
-            return result;
-        } catch (err) {
-            console.warn('GSP e-invoice failed, falling back to mock:', err);
-        }
+    if (mode === 'live') {
+        const result = await api.generateEInvoiceProxy(transaction);
+        if (!isValidIrn(result.irn)) throw new Error('GSP returned invalid IRN format');
+        if (!isValidAckNo(String(result.ackNo))) throw new Error('GSP returned invalid Ack No format');
+        return { irn: result.irn, ackNo: String(result.ackNo), ackDate: result.ackDate, status: 'Generated' };
     }
 
+    // Explicit mock/sandbox path — clearly flagged, never mixed with real filings.
     await new Promise(r => setTimeout(r, 400));
 
     const irn = generateHash(`${transaction.id}-${transaction.invoiceNumber || ''}-${transaction.total}`);
@@ -92,21 +77,21 @@ export async function generateEInvoice(
     if (!isValidIrn(irn)) throw new Error('Generated IRN failed validation');
     if (!isValidAckNo(ackNo)) throw new Error('Generated Ack No failed validation');
 
-    return { irn, ackNo, ackDate, status: 'Generated' };
+    return { irn, ackNo, ackDate, status: 'MockGenerated' };
 }
 
+/**
+ * Generate an E-Way Bill. Same contract as generateEInvoice: live mode fails
+ * loudly through the server proxy; mock mode is explicitly requested.
+ */
 export async function generateEWayBill(
     transaction: Transaction,
-    config?: GspConfig
+    mode: EInvoiceMode = 'mock'
 ): Promise<EWayBillGenerateResult> {
-    if (config?.apiKey && config?.gspUrl) {
-        try {
-            const result = await callGsp<EWayBillGenerateResult>('/ewaybill/generate', transaction, config);
-            if (!isValidEWayBillNo(result.eWayBillNo)) throw new Error('GSP returned invalid E-Way Bill No');
-            return result;
-        } catch (err) {
-            console.warn('GSP e-way bill failed, falling back to mock:', err);
-        }
+    if (mode === 'live') {
+        const result = await api.generateEWayBillProxy(transaction);
+        if (!isValidEWayBillNo(String(result.eWayBillNo))) throw new Error('GSP returned invalid E-Way Bill No');
+        return { eWayBillNo: String(result.eWayBillNo), eWayBillDate: result.eWayBillDate, status: 'Generated' };
     }
 
     await new Promise(r => setTimeout(r, 300));
@@ -116,11 +101,16 @@ export async function generateEWayBill(
 
     if (!isValidEWayBillNo(eWayBillNo)) throw new Error('Generated E-Way Bill No failed validation');
 
-    return { eWayBillNo, eWayBillDate, status: 'Generated' };
+    return { eWayBillNo, eWayBillDate, status: 'MockGenerated' };
 }
 
-export function requiresEInvoice(transaction: Transaction): boolean {
-    return !!(transaction.customerGst && transaction.total >= 50000);
+/**
+ * The e-invoicing mandate applies by aggregate annual TURNOVER (configured per
+ * firm in Settings), not per-invoice value — so any B2B invoice from a
+ * mandate-covered firm needs an IRN.
+ */
+export function requiresEInvoice(transaction: Transaction, mandateApplied = false): boolean {
+    return !!(mandateApplied && transaction.customerGst);
 }
 
 export function requiresEWayBill(transaction: Transaction): boolean {

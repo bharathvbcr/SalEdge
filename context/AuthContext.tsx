@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import { UserRole } from '../types.ts';
-import { api, ApiUser, clearToken, getToken, setToken } from '../utils/api.ts';
+import { api, ApiUser, clearToken, getToken, setToken, UNAUTHORIZED_EVENT } from '../utils/api.ts';
 import { TEST_LOGIN_ENABLED, getAutoLoginAccount } from '../utils/testLogin.ts';
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
@@ -10,6 +10,7 @@ interface AuthContextType {
     userRole: UserRole | null;
     login: (username: string, password: string) => Promise<boolean>;
     register: (username: string, password: string, displayName?: string) => Promise<boolean>;
+    changePassword: (currentPassword: string, newPassword: string) => Promise<string | null>;
     logout: () => void;
     isAuthenticated: boolean;
     isLoading: boolean;
@@ -28,6 +29,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const logout = useCallback(() => {
         clearToken();
+        // Queues/intents live in sessionStorage keyed only by tab — on a shared
+        // phone they would leak the previous user's scans into the next session.
+        try {
+            const stale: string[] = [];
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const k = sessionStorage.key(i);
+                if (k && k.startsWith('bsms_')) stale.push(k);
+            }
+            stale.forEach(k => sessionStorage.removeItem(k));
+        } catch { /* storage unavailable */ }
         setUser(null);
     }, []);
 
@@ -94,16 +105,31 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         };
     }, [user, updateActivity]);
 
+    // The API layer clears the stored token whenever the server rejects it
+    // (expired JWT, deactivated account). End the session here so the lock
+    // screen appears instead of an app that looks logged in but cannot save.
+    useEffect(() => {
+        const onUnauthorized = () => {
+            setUser(null);
+            setLastActivity(Date.now());
+        };
+        window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+        return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    }, []);
+
     const login = async (username: string, password: string): Promise<boolean> => {
         try {
             const { token, user: loggedInUser } = await api.login(username, password);
             setToken(token);
+            // Verify the session before committing auth state — otherwise a
+            // failed verification leaves the app mounted behind an error.
+            const me = await api.me();
             setUser(loggedInUser);
             setLastActivity(Date.now());
-            const me = await api.me();
             setAllowRegistration(me.allowRegistration);
             return true;
         } catch {
+            clearToken();
             return false;
         }
     };
@@ -121,12 +147,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    /** Returns an error message on failure, null on success. */
+    const changePassword = async (currentPassword: string, newPassword: string): Promise<string | null> => {
+        try {
+            const { user: updatedUser } = await api.changePassword(currentPassword, newPassword);
+            setUser(updatedUser);
+            return null;
+        } catch (err) {
+            return err instanceof Error ? err.message : 'Password change failed';
+        }
+    };
+
     return (
         <AuthContext.Provider value={{
             user,
             userRole: user?.role ?? null,
             login,
             register,
+            changePassword,
             logout,
             isAuthenticated: user !== null,
             isLoading,

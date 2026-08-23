@@ -115,10 +115,10 @@ export interface Transaction {
     eInvoiceIrn?: string; // E-invoice IRN (for B2B > 5 Cr)
     eInvoiceAckNo?: string; // E-invoice acknowledgement number
     eInvoiceAckDate?: string; // E-invoice acknowledgement date (ISO)
-    eInvoiceStatus?: 'Not Generated' | 'Pending' | 'Generated' | 'Cancelled' | 'Failed';
+    eInvoiceStatus?: 'Not Generated' | 'Pending' | 'Generated' | 'MockGenerated' | 'Cancelled' | 'Failed';
     eWayBillNo?: string; // E-way bill number (goods > 50k)
     eWayBillDate?: string; // E-way bill valid-from date (ISO)
-    eWayBillStatus?: 'Not Generated' | 'Pending' | 'Generated' | 'Cancelled' | 'Failed';
+    eWayBillStatus?: 'Not Generated' | 'Pending' | 'Generated' | 'MockGenerated' | 'Cancelled' | 'Failed';
 
     items: {
         id: string; // This will be the inventoryId for stock items
@@ -583,8 +583,13 @@ export interface AppPreferences {
     loyaltyProgram: LoyaltySettings;
     saleCategories?: string[];
     browserNotificationsEnabled?: boolean;
-    eInvoiceApiKey?: string;
-    eInvoiceGspUrl?: string;
+    /**
+     * E-invoice GSP credentials are stored SERVER-SIDE via /api/secrets
+     * (never in the shared config blob readable by every staff account).
+     */
+    eInvoiceMode?: 'mock' | 'live';
+    /** True when the firm's aggregate turnover crosses the e-invoicing mandate threshold. */
+    eInvoiceMandateApplied?: boolean;
     aiSettings?: AiSettings;
 }
 
@@ -613,8 +618,8 @@ export interface InventoryLog {
 export interface AuditLog {
     id: string;
     date: string;
-    action: 'DELETE' | 'UPDATE' | 'CREATE' | 'EINVOICE' | 'STOCK_REVERSAL';
-    entityType: 'Transaction' | 'Purchase' | 'Expense' | 'ServiceJob';
+    action: 'DELETE' | 'UPDATE' | 'CREATE' | 'EINVOICE' | 'STOCK_REVERSAL' | 'DATA_IMPORT' | 'DATA_RESET' | 'BACKUP_CREATED';
+    entityType: 'Transaction' | 'Purchase' | 'Expense' | 'ServiceJob' | 'AppData' | 'Database';
     entityId: string;
     userRole: UserRole;
     details: string;

@@ -233,8 +233,8 @@ export const ReportsPage: React.FC = () => {
     );
 
     const gstr3b = useMemo(
-        () => computeGstr3b(filteredTransactions, firmPurchases, productTypes, gstRate),
-        [filteredTransactions, firmPurchases, productTypes, gstRate]
+        () => computeGstr3b(filteredTransactions, firmPurchases),
+        [filteredTransactions, firmPurchases]
     );
 
     // Receivables Aging Analysis (legacy alias)
@@ -305,8 +305,13 @@ export const ReportsPage: React.FC = () => {
         const salesTransactions = filteredTransactions.filter(t =>
             (t.status === 'Paid' || t.status === 'Due') && t.type !== 'Return'
         );
+        // Credit notes (CDNR / Table 9B): dropping them overstates filed
+        // liability — same defect class the GSTR-3B summary had.
+        const creditNotes = filteredTransactions.filter(t =>
+            (t.status === 'Paid' || t.status === 'Due') && t.type === 'Return'
+        );
 
-        if (salesTransactions.length === 0) {
+        if (salesTransactions.length === 0 && creditNotes.length === 0) {
             addToast('No sales transactions to export for GSTR-1.', 'warning');
             return;
         }
@@ -397,6 +402,26 @@ export const ReportsPage: React.FC = () => {
             'Cess Amount': '0',
         }));
 
+        // CDNR — credit note rows carry NEGATIVE values so the filed totals
+        // net against the B2B/B2CS invoices they reverse.
+        const cdnrData = creditNotes.map(t => {
+            const firm = config.firms.find(f => f.id === t.firmId);
+            const sellerStateCode = firm?.shopDetails.gstin?.substring(0, 2) || '';
+            const buyerStateCode = t.placeOfSupply || sellerStateCode;
+            return {
+                'GSTIN of Recipient': t.customerGst || '',
+                'Receiver Name': t.customerName,
+                'Note Number': t.invoiceNumber || t.id,
+                'Note Date': new Date(t.date).toLocaleDateString('en-GB').replace(/\//g, '-'),
+                'Place of Supply': buyerStateCode,
+                'Note Type': 'Credit Note',
+                'Original Invoice No.': t.originalTransactionId || '',
+                'Rate': firm?.financials.gstRate || 0,
+                'Taxable Value': (-(t.total - t.taxAmount)).toFixed(2),
+                'Cess Amount': '0',
+            };
+        });
+
         // Download all three as separate files
         if (b2bData.length > 0) {
             downloadCSV(b2bData, `GSTR1_B2B_${filter}_${new Date().toISOString().split('T')[0]}.csv`);
@@ -407,8 +432,11 @@ export const ReportsPage: React.FC = () => {
         if (hsnData.length > 0) {
             downloadCSV(hsnData, `GSTR1_HSN_${filter}_${new Date().toISOString().split('T')[0]}.csv`);
         }
+        if (cdnrData.length > 0) {
+            downloadCSV(cdnrData, `GSTR1_CDNR_${filter}_${new Date().toISOString().split('T')[0]}.csv`);
+        }
 
-        addToast(`GSTR-1 export complete — B2B: ${b2bData.length}, B2CS: ${b2csData.length}, HSN: ${hsnData.length}`, 'success');
+        addToast(`GSTR-1 export complete — B2B: ${b2bData.length}, B2CS: ${b2csData.length}, HSN: ${hsnData.length}, Credit Notes: ${cdnrData.length}`, 'success');
     };
 
     const handleGSTR3BExport = () => {

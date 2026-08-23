@@ -33,6 +33,11 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
     const [libReady, setLibReady] = useState(false);
     const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
     const libRef = useRef<typeof import('html5-qrcode') | null>(null);
+    // Latest callback in a ref: parent state updates (queue, inventory, prefs)
+    // recreate onScan every render — depending on it here restarted the camera
+    // mid-batch and reset the duplicate-scan window on every cycle.
+    const onScanRef = useRef(onScan);
+    onScanRef.current = onScan;
 
     const stopScanner = useCallback(async () => {
         if (scannerRef.current?.isScanning) {
@@ -61,7 +66,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
                     lastScanRef.current = { code: trimmed, at: now };
                     hapticSuccess();
                     if (scanSound) playScanBeep();
-                    onScan(trimmed);
+                    onScanRef.current(trimmed);
                     if (pauseOnScan) {
                         stopScanner().then(() => setPaused(true));
                     }
@@ -82,7 +87,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
                 : message);
             setIsRunning(false);
         }
-    }, [active, onScan, pauseOnScan, scanSound, stopScanner]);
+    }, [active, pauseOnScan, scanSound, stopScanner]);
 
     // Lazy-load html5-qrcode
     useEffect(() => {

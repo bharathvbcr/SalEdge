@@ -1,24 +1,15 @@
 import { useEffect, useRef, useCallback } from 'react';
-
-const WEDGE_GAP_MS = 50;
-const MIN_LENGTH = 3;
+import { BarcodeWedgeBuffer } from '../utils/barcodeWedgeBuffer.ts';
 
 export function useBarcodeWedge(enabled: boolean, onScan: (code: string) => void) {
-    const bufferRef = useRef('');
-    const lastKeyTimeRef = useRef(0);
+    const bufferRef = useRef<BarcodeWedgeBuffer | null>(null);
+    if (!bufferRef.current) bufferRef.current = new BarcodeWedgeBuffer();
     const onScanRef = useRef(onScan);
     onScanRef.current = onScan;
 
-    const flush = useCallback(() => {
-        const code = bufferRef.current.trim();
-        bufferRef.current = '';
-        if (code.length >= MIN_LENGTH) {
-            onScanRef.current(code);
-        }
-    }, []);
-
     useEffect(() => {
         if (!enabled) return;
+        const buffer = bufferRef.current!;
 
         const handleKeyDown = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement;
@@ -27,26 +18,26 @@ export function useBarcodeWedge(enabled: boolean, onScan: (code: string) => void
                 return;
             }
 
-            const now = Date.now();
-            if (now - lastKeyTimeRef.current > WEDGE_GAP_MS) {
-                bufferRef.current = '';
-            }
-            lastKeyTimeRef.current = now;
-
             if (e.key === 'Enter') {
-                if (bufferRef.current) {
+                // Only swallow Enter when it actually completes a scan —
+                // previously stray keystrokes ate Enter with no scan emitted.
+                if (buffer.willEmitOnEnter()) {
                     e.preventDefault();
-                    flush();
+                    const code = buffer.handleKey('Enter');
+                    if (code) onScanRef.current(code);
                 }
                 return;
             }
 
             if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                bufferRef.current += e.key;
+                buffer.handleKey(e.key);
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [enabled, flush]);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            buffer.reset();
+        };
+    }, [enabled]);
 }

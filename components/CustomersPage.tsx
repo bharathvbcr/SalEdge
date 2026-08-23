@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAppData } from '../context/AppDataContext.tsx';
 import { Customer } from '../types.ts';
 import { CustomerDetailModal } from './CustomerDetailModal.tsx';
 import { PageHeader } from './PageHeader.tsx';
 import { SearchInput } from './SearchInput.tsx';
+import { PaginationBar } from './PaginationBar.tsx';
 import { EmptyState } from './EmptyState.tsx';
 import { useConfig } from '../context/ConfigContext.tsx';
 import { IconCustomers } from './icons.tsx';
@@ -65,55 +66,57 @@ const CustomerCard: React.FC<{ customer: Customer; onClick: () => void }> = ({ c
 import { Page } from '../types.ts';
 import { requestOpenSale } from '../utils/mobileSaleQueue.ts';
 import { requestSaleCustomerPrefill } from '../utils/pageActions.ts';
+import { computeCustomerFinancials } from '../utils/customerStats.ts';
 
 export const CustomersPage: React.FC<{ onNavigate?: (page: Page) => void }> = ({ onNavigate }) => {
     const { transactions, serviceJobs, warrantyLogs, paymentVouchers } = useAppData();
     const { config } = useConfig();
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(25);
 
     const customers = useMemo<Customer[]>(() => {
         const customerMap = new Map<string, Customer>();
         const loyaltySettings = config.preferences.loyaltyProgram;
 
-        // 1. Process Transactions
-        const processTransaction = (t: any) => {
+        // Group transactions per customer, then derive ALL financials through
+        // the shared helper so this page and the sales form can never
+        // disagree (returns reverse spend/due/points; quotations are skipped;
+        // voucher receipts settle dues).
+        const txnsByCustomer = new Map<string, { name: string; phone: string; txns: typeof transactions }>();
+        transactions.forEach(t => {
             const name = t.customerName;
             const phone = t.customerPhone;
-            
             if (!name || name === 'Walk-in' || !phone) return;
             const id = `${name.toLowerCase().trim()}|${phone.trim()}`;
-            
+            const entry = txnsByCustomer.get(id) || { name, phone: phone.trim(), txns: [] };
+            entry.txns.push(t);
+            txnsByCustomer.set(id, entry);
+        });
+
+        txnsByCustomer.forEach((entry, id) => {
+            const financials = computeCustomerFinancials(entry.txns, [], loyaltySettings);
+
             const existing = customerMap.get(id) || {
-                id, name, phone, 
+                id, name: entry.name, phone: entry.phone,
                 totalSpent: 0, totalDue: 0, loyaltyPoints: 0,
-                firstSeen: t.date, lastSeen: t.date,
+                firstSeen: entry.txns[0].date, lastSeen: entry.txns[0].date,
                 transactionIds: [], serviceJobIds: []
             };
 
-            // Financials
-            existing.totalSpent += t.total;
-            
-            // Total Due Calculation: (Invoice Amount - Invoice Payments)
-            const paidOnInvoice = t.payments ? t.payments.reduce((acc: number, p: any) => acc + p.amount, 0) : 0;
-            existing.totalDue += (t.total - paidOnInvoice);
+            existing.totalSpent += financials.totalSpent;
+            existing.totalDue += financials.totalDue;
+            existing.loyaltyPoints += financials.loyaltyPoints;
 
-            // Points Calculation
-            if (loyaltySettings.enabled && loyaltySettings.earnRate > 0) {
-                 const pointsEarned = Math.floor(t.total / loyaltySettings.earnRate);
-                 existing.loyaltyPoints += pointsEarned;
-             }
-            const pointsRedeemed = t.redeemedPoints || 0;
-            existing.loyaltyPoints -= pointsRedeemed;
+            entry.txns.forEach(t => {
+                if (new Date(t.date) < new Date(existing.firstSeen)) existing.firstSeen = t.date;
+                if (new Date(t.date) > new Date(existing.lastSeen)) existing.lastSeen = t.date;
+                if (!existing.transactionIds.includes(t.id)) existing.transactionIds.push(t.id);
+            });
 
-            // Dates
-            if (new Date(t.date) < new Date(existing.firstSeen)) existing.firstSeen = t.date;
-            if (new Date(t.date) > new Date(existing.lastSeen)) existing.lastSeen = t.date;
-            
-            if (!existing.transactionIds.includes(t.id)) existing.transactionIds.push(t.id);
-            
             customerMap.set(id, existing);
-        };
+        });
 
         const processService = (j: any) => {
              const name = j.customerName;
@@ -144,7 +147,6 @@ export const CustomersPage: React.FC<{ onNavigate?: (page: Page) => void }> = ({
              customerMap.set(id, existing);
         };
 
-        transactions.forEach(t => processTransaction(t));
         serviceJobs.forEach(j => processService(j));
         
         // 2. Process Banking Vouchers (Standalone Receipts)
@@ -181,6 +183,23 @@ export const CustomersPage: React.FC<{ onNavigate?: (page: Page) => void }> = ({
         );
     }, [customers, searchQuery]);
 
+    const totalPages = Math.ceil(filteredCustomers.length / itemsPerPage) || 1;
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, itemsPerPage]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
+    const paginatedCustomers = useMemo(() => {
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        return filteredCustomers.slice(startIndex, startIndex + itemsPerPage);
+    }, [filteredCustomers, currentPage, itemsPerPage]);
+
     const handleStartSale = (customer: Customer) => {
         requestSaleCustomerPrefill({ customerName: customer.name, customerPhone: customer.phone });
         requestOpenSale();
@@ -199,7 +218,7 @@ export const CustomersPage: React.FC<{ onNavigate?: (page: Page) => void }> = ({
             </PageHeader>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {filteredCustomers.map(customer => (
+                {paginatedCustomers.map(customer => (
                     <CustomerCard key={customer.id} customer={customer} onClick={() => setSelectedCustomer(customer)} />
                 ))}
                 {filteredCustomers.length === 0 && (
@@ -212,7 +231,15 @@ export const CustomersPage: React.FC<{ onNavigate?: (page: Page) => void }> = ({
                     </div>
                 )}
             </div>
-            
+
+            <PaginationBar
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setCurrentPage}
+                itemsPerPage={itemsPerPage}
+                onItemsPerPageChange={setItemsPerPage}
+            />
+
             {selectedCustomer && (
                 <CustomerDetailModal 
                     customer={selectedCustomer} 

@@ -55,7 +55,6 @@ class SemanticLayerConfig(BaseSettings):
     # Compressor
     relevance_threshold: float = 0.35
     max_context_tokens: int = 4096
-    context_budget_ratio: float = 0.6
 
     # Backend
     inference_backend: InferenceBackend = InferenceBackend.OLLAMA

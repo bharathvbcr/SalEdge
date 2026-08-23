@@ -88,7 +88,7 @@ privacy:
   store_prompts_locally: true
 project:
   default_branch: main
-  name: battery-shop-management-system
+  name: saledge
   root: .
 telemetry:
   cost_budget_usd: null

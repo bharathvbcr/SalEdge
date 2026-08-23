@@ -1,5 +1,5 @@
 {
-  "name": "Battery Shop Management System",
-  "description": "A comprehensive system for managing sales, inventory, and services at a battery shop. This initial phase focuses on the sales and transactions log, setting the UI/UX foundation for future modules.",
+  "name": "SalEdge",
+  "description": "SalEdge - Modern Battery Shop Management & ERP System",
   "requestFramePermissions": []
 }

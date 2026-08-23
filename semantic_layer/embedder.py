@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,10 +38,13 @@ class EmbedderService:
         model_name: str = DEFAULT_MODEL,
         device: str = "cpu",
         normalize: bool = True,
+        batch_size: int = 32,
     ) -> None:
         self._model_name = model_name
         self._device = device
         self._normalize = normalize
+        # 0 or negative disables the cap (sentence-transformers picks its own).
+        self._batch_size = batch_size if batch_size and batch_size > 0 else None
         self._lock = threading.Lock()
         self._model = None
         self._norm_stats = _RunningStats()
@@ -90,12 +93,15 @@ class EmbedderService:
             return []
 
         t0 = time.perf_counter()
+        encode_kwargs: dict[str, Any] = {}
+        if self._batch_size is not None:
+            encode_kwargs["batch_size"] = min(len(texts), self._batch_size)
         raw_batch: NDArray[np.float32] = self._model.encode(
             list(texts),
             convert_to_numpy=True,
             normalize_embeddings=False,
             show_progress_bar=False,
-            batch_size=min(len(texts), 32),
+            **encode_kwargs,
         ).astype(np.float32)
 
         total_ms = (time.perf_counter() - t0) * 1000

@@ -1,11 +1,28 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
-import { getUserByUsername, getUserById, createUser, countUsers, DbUser } from './db.js';
+import { getUserByUsername, getUserById, createUser, countUsers, DbUser, updateUserPassword, clearMustChangePasswordFlag } from './db.js';
+import { hashPassword, verifyPasswordValue, isLegacyBcryptHash } from './passwords.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bsms-dev-secret-change-in-production';
+const DEFAULT_DEV_SECRET = 'bsms-dev-secret-change-in-production';
 const JWT_EXPIRES_IN = '7d';
 const ALLOW_REGISTRATION = process.env.ALLOW_REGISTRATION === 'true';
+
+function resolveJwtSecret(): string {
+    const secret = process.env.JWT_SECRET?.trim();
+    if (!secret || secret === DEFAULT_DEV_SECRET) {
+        if (process.env.NODE_ENV === 'production' || process.env.BSMS_DEV !== 'true') {
+            throw new Error(
+                'Refusing to start: JWT_SECRET is not set to a secure value. '
+                + 'Generate one (e.g. `openssl rand -hex 32`) and add it to .env.'
+            );
+        }
+        console.warn('[auth] Using development JWT secret — never ship this to production.');
+        return DEFAULT_DEV_SECRET;
+    }
+    return secret;
+}
+
+const JWT_SECRET = resolveJwtSecret();
 
 export interface AuthPayload {
     userId: number;
@@ -32,8 +49,30 @@ export function signToken(user: DbUser): string {
     return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
-export function verifyPassword(user: DbUser, password: string): boolean {
-    return bcrypt.compareSync(password, user.password_hash);
+function serializeUser(user: DbUser) {
+    return {
+        id: user.id,
+        username: user.username,
+        displayName: user.display_name,
+        role: user.role,
+        mustChangePassword: user.must_change_password === 1,
+    };
+}
+
+/**
+ * Verify a password; when the stored hash is legacy bcrypt it is transparently
+ * upgraded to scrypt so every active account converges on the stronger format.
+ */
+function verifyAndUpgrade(user: DbUser, password: string): boolean {
+    if (!verifyPasswordValue(password, user.password_hash)) return false;
+    if (isLegacyBcryptHash(user.password_hash)) {
+        try {
+            updateUserPassword(user.id, hashPassword(password));
+        } catch (err) {
+            console.error('[auth] Failed to upgrade password hash:', err instanceof Error ? err.message : err);
+        }
+    }
+    return true;
 }
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
@@ -79,7 +118,7 @@ export function loginHandler(req: Request, res: Response): void {
     }
 
     const user = getUserByUsername(username.trim().toLowerCase());
-    if (!user || user.is_active !== 1 || !verifyPassword(user, password)) {
+    if (!user || user.is_active !== 1 || !verifyAndUpgrade(user, password)) {
         res.status(401).json({ error: 'Invalid username or password' });
         return;
     }
@@ -87,12 +126,8 @@ export function loginHandler(req: Request, res: Response): void {
     const token = signToken(user);
     res.json({
         token,
-        user: {
-            id: user.id,
-            username: user.username,
-            displayName: user.display_name,
-            role: user.role,
-        },
+        mustChangePassword: user.must_change_password === 1,
+        user: serializeUser(user),
     });
 }
 
@@ -101,13 +136,9 @@ export function meHandler(req: Request, res: Response): void {
         res.status(401).json({ error: 'Not authenticated' });
         return;
     }
+    const current = getUserById(req.user.userId)!;
     res.json({
-        user: {
-            id: req.user.userId,
-            username: req.user.username,
-            displayName: req.user.displayName,
-            role: req.user.role,
-        },
+        user: serializeUser(current),
         allowRegistration: ALLOW_REGISTRATION || countUsers() === 0,
     });
 }
@@ -147,11 +178,42 @@ export function registerHandler(req: Request, res: Response): void {
     const token = signToken(user);
     res.status(201).json({
         token,
-        user: {
-            id: user.id,
-            username: user.username,
-            displayName: user.display_name,
-            role: user.role,
-        },
+        mustChangePassword: false,
+        user: serializeUser(user),
     });
+}
+
+/** Self-service password change: requires the current password. */
+export function changePasswordHandler(req: Request, res: Response): void {
+    if (!req.user) {
+        res.status(401).json({ error: 'Not authenticated' });
+        return;
+    }
+
+    const { currentPassword, newPassword } = req.body as {
+        currentPassword?: string;
+        newPassword?: string;
+    };
+
+    if (!currentPassword || !newPassword || newPassword.length < 8) {
+        res.status(400).json({ error: 'Current password and a new password (min 8 chars) are required' });
+        return;
+    }
+    if (newPassword === currentPassword) {
+        res.status(400).json({ error: 'New password must differ from the current password' });
+        return;
+    }
+
+    const user = getUserById(req.user.userId);
+    if (!user || !verifyAndUpgrade(user, currentPassword)) {
+        res.status(401).json({ error: 'Current password is incorrect' });
+        return;
+    }
+
+    updateUserPassword(user.id, hashPassword(newPassword));
+    // Password change clears the forced-change flag.
+    clearMustChangePasswordFlag(user.id);
+
+    const fresh = getUserById(req.user.userId)!;
+    res.json({ ok: true, user: serializeUser(fresh) });
 }

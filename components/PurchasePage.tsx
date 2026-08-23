@@ -10,6 +10,7 @@ import { ConfirmationModal } from './ConfirmationModal.tsx';
 import { EmptyState } from './EmptyState.tsx';
 import { PageHeader } from './PageHeader.tsx';
 import { SearchInput } from './SearchInput.tsx';
+import { PaginationBar } from './PaginationBar.tsx';
 import { Modal, ModalHeader, ModalFooter } from './Modal.tsx';
 import { useToast } from '../context/ToastContext.tsx';
 import { PurchaseImportModal } from './PurchaseImportModal.tsx';
@@ -102,6 +103,10 @@ const PurchaseFormModal: React.FC<{
     const [unmatchedItems, setUnmatchedItems] = useState(ocrPrefill?.unmatchedItems ?? []);
     const [creatingProductIndex, setCreatingProductIndex] = useState<number | null>(null);
     const [creatingSupplier, setCreatingSupplier] = useState(false);
+    // A fresh extraction that would REPLACE already-populated line items is
+    // staged behind a confirmation — one click must not silently destroy
+    // corrected prices or hand-entered serials.
+    const [pendingPrefill, setPendingPrefill] = useState<PurchaseOcrPrefill | null>(null);
 
     const applyOcrPrefill = (prefill: PurchaseOcrPrefill) => {
         setFormData(prev => ({
@@ -141,7 +146,12 @@ const PurchaseFormModal: React.FC<{
                 config.preferences.aiSettings,
                 { suppliers, productTypes },
             );
-            applyOcrPrefill(prefill);
+            if (hasExtracted && items.length > 0) {
+                setPendingPrefill(prefill);
+                addToast('Extraction ready — confirm to replace current line items.', 'info');
+            } else {
+                applyOcrPrefill(prefill);
+            }
             if (prefill.warnings.length > 0) {
                 addToast(`Extracted with ${prefill.warnings.length} warning(s). Review before saving.`, 'warning');
             } else {
@@ -376,7 +386,8 @@ const PurchaseFormModal: React.FC<{
         const file = e.target.files?.[0];
         if (!file) return;
         try {
-            setInvoiceImage(await readImageAsDataUrl(file));
+            // Downscale before OCR: raw camera bytes cost 3-10x more tokens/latency.
+            setInvoiceImage(await readImageAsDataUrl(file, undefined, true));
         } catch (error) {
             addToast(error instanceof Error ? error.message : 'Failed to upload image.', 'error');
         }
@@ -745,6 +756,19 @@ const PurchaseFormModal: React.FC<{
                         <button onClick={handleSubmit} className="btn-primary">{isEdit ? 'Update Purchase' : 'Save Purchase'}</button>
                     </div>
                 </ModalFooter>
+            {pendingPrefill && (
+                <ConfirmationModal
+                    variant="default"
+                    title="Replace line items?"
+                    message={`The new extraction has ${pendingPrefill.items.length} matched line(s). Applying it will replace your current ${items.length} line item(s), including any edited prices or serial numbers.`}
+                    confirmText="Replace Items"
+                    onConfirm={() => {
+                        applyOcrPrefill(pendingPrefill);
+                        setPendingPrefill(null);
+                    }}
+                    onCancel={() => setPendingPrefill(null)}
+                />
+            )}
         </Modal>
     );
 };
@@ -769,6 +793,8 @@ export const PurchasePage: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [supplierFilter, setSupplierFilter] = useState('');
     const [paymentFilter, setPaymentFilter] = useState<'all' | 'Paid' | 'Due' | 'Partial'>('all');
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(25);
 
     const aiEnabled = userRole === 'admin' && (config.preferences.aiSettings?.enabled ?? false);
 
@@ -787,6 +813,23 @@ export const PurchasePage: React.FC = () => {
             );
         }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }, [purchases, searchQuery, supplierFilter, paymentFilter, suppliers]);
+
+    const totalPages = Math.ceil(filteredPurchases.length / itemsPerPage) || 1;
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, supplierFilter, paymentFilter, itemsPerPage]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
+    const paginatedPurchases = useMemo(() => {
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        return filteredPurchases.slice(startIndex, startIndex + itemsPerPage);
+    }, [filteredPurchases, currentPage, itemsPerPage]);
 
     const openNewPurchase = useCallback((upload?: PurchaseInvoiceUpload | null, prefill?: PurchaseOcrPrefill | null) => {
         setEditingPurchase(null);
@@ -956,7 +999,7 @@ export const PurchasePage: React.FC = () => {
                                     disabled={batchScanning || scanningUploadId !== null}
                                     className="btn-info btn-sm whitespace-nowrap"
                                 >
-                                    {batchScanning ? 'Scanning…' : 'Scan all pending'}
+                                    {batchScanning ? 'Scanning…' : 'Scan next pending'}
                                 </button>
                             )}
                             <span className="text-sm font-bold text-brand-red">{purchaseInvoiceQueue.length} pending</span>
@@ -1071,7 +1114,7 @@ export const PurchasePage: React.FC = () => {
                                         />
                                     </td>
                                 </tr>
-                            ) : filteredPurchases.map(p => {
+                            ) : paginatedPurchases.map(p => {
                                 const supplier = suppliers.find(s => s.id === p.supplierId);
                                 const firm = config.firms.find(f => f.id === p.firmId);
                                 return (
@@ -1129,6 +1172,13 @@ export const PurchasePage: React.FC = () => {
                         </tbody>
                     </table>
                     </div>
+                    <PaginationBar
+                        currentPage={currentPage}
+                        totalPages={totalPages}
+                        onPageChange={setCurrentPage}
+                        itemsPerPage={itemsPerPage}
+                        onItemsPerPageChange={setItemsPerPage}
+                    />
                 </div>
             )}
 

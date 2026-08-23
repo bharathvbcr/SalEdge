@@ -1,6 +1,7 @@
 import { PaymentMethod, ProductType, Purchase, PurchaseItem, Supplier } from '../types.ts';
 import { findProduct, findSupplier } from './purchaseMatching.ts';
 import { validateBatterySerials } from './serialNumbers.ts';
+import { roundPaise } from '../indianGST.ts';
 
 export interface PurchaseImportContext {
     suppliers: Supplier[];
@@ -91,9 +92,18 @@ function buildPurchaseItem(
         errors.push(`${lineLabel}: invalid MRP`);
         return null;
     }
+    // Statutory GST rates top out at 28%. A malformed row (e.g. taxRate=-18)
+    // previously produced negative tax that REDUCED the bill total and fed a
+    // bogus ITC into GSTR exports.
+    if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 28) {
+        errors.push(`${lineLabel}: invalid GST rate (must be between 0 and 28)`);
+        return null;
+    }
 
     const totalExclTax = unitPrice * quantity;
-    const taxAmount = totalExclTax * (taxRate / 100);
+    // Paise-exact: raw floats leak 28.000000000000004-style noise into bill
+    // totals and GSTR ITC aggregates.
+    const taxAmount = roundPaise(totalExclTax * (taxRate / 100));
     const typeRaw = (row.type || 'New').trim();
     const type = typeRaw.toLowerCase() === 'refurbished' ? 'Refurbished' : 'New';
     const serialRaw = row.serialnumbers || row.serialNumbers || '';
@@ -109,7 +119,7 @@ function buildPurchaseItem(
         mrp,
         taxRate: Number.isFinite(taxRate) ? taxRate : 18,
         taxAmount,
-        total: totalExclTax + taxAmount,
+        total: roundPaise(totalExclTax + taxAmount),
         batchNumber: row.batchnumber || row.batchNumber || undefined,
         serialNumbers: serialNumbers.length > 0 ? serialNumbers : [],
     };
@@ -353,11 +363,13 @@ export function findDuplicatePurchases(
     existing: Purchase[],
 ): { draft: ParsedPurchaseDraft; existingId: string }[] {
     const duplicates: { draft: ParsedPurchaseDraft; existingId: string }[] = [];
+    // OCR-typical variants (INV-1001 / INV 1001 / inv1001) are the same bill.
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     for (const draft of drafts) {
         const match = existing.find(p =>
             p.firmId === draft.firmId &&
             p.supplierId === draft.supplierId &&
-            p.supplierInvoiceNumber.toLowerCase() === draft.supplierInvoiceNumber.toLowerCase()
+            norm(p.supplierInvoiceNumber) === norm(draft.supplierInvoiceNumber)
         );
         if (match) duplicates.push({ draft, existingId: match.id });
     }

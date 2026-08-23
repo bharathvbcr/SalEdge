@@ -1,7 +1,7 @@
 {
-  "name": "battery-shop-management-system",
+  "name": "saledge",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "PORT=auto SEMANTIC_LAYER_URL=auto node scripts/dev.mjs",
@@ -16,6 +16,7 @@
     "build": "vite build",
     "build:test": "VITE_ENABLE_TEST_LOGIN=true vite build",
     "build:server": "esbuild server/index.ts --bundle --platform=node --packages=external --format=esm --outfile=dist-server/index.mjs",
+    "test": "node --import tsx --test tests/*.test.ts",
     "build:desktop": "npm run build && npm run build:server",
     "typecheck": "tsc --noEmit",
     "ci:local": "npm run typecheck && npm run build && npm run build:server && cargo check --manifest-path src-tauri/Cargo.toml",
@@ -58,6 +59,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.1.2",
     "esbuild": "^0.28.1",
+    "tailwindcss": "^3.4.19",
     "tsx": "^4.19.3",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

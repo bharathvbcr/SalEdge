@@ -1,6 +1,5 @@
 
-
-import React, { createContext, useContext, ReactNode } from 'react';
+import React, { createContext, useContext, ReactNode, useCallback, useMemo } from 'react';
 import useApiStorage from '../hooks/useApiStorage.tsx';
 import { ProductType, Supplier, CustomerProfile } from '../types.ts';
 import { INITIAL_PRODUCT_TYPES } from '../constants.ts';
@@ -31,7 +30,7 @@ export const MasterDataProvider: React.FC<{ children: ReactNode }> = ({ children
 
     const isLoading = ptLoading || supLoading || cpLoading;
 
-    const upsertCustomerProfile = (profile: CustomerProfile) => {
+    const upsertCustomerProfile = useCallback((profile: CustomerProfile) => {
         setCustomerProfiles(prev => {
             const idx = prev.findIndex(p => p.id === profile.id);
             if (idx >= 0) {
@@ -42,11 +41,11 @@ export const MasterDataProvider: React.FC<{ children: ReactNode }> = ({ children
             return [...prev, profile];
         });
         addToast('Customer profile saved!', 'success');
-    };
+    }, [setCustomerProfiles, addToast]);
 
-    const getCustomerProfile = (id: string) => customerProfiles.find(p => p.id === id);
+    const getCustomerProfile = useCallback((id: string) => customerProfiles.find(p => p.id === id), [customerProfiles]);
 
-    const addProductType = (newProductType: Omit<ProductType, 'id'>) => {
+    const addProductType = useCallback((newProductType: Omit<ProductType, 'id'>) => {
         const product: ProductType = {
             ...newProductType,
             id: `PROD${Date.now()}`,
@@ -54,19 +53,19 @@ export const MasterDataProvider: React.FC<{ children: ReactNode }> = ({ children
         setProductTypes(prev => [...prev, product]);
         addToast('New product type added!', 'success');
         return product;
-    };
+    }, [setProductTypes, addToast]);
 
-    const updateProductType = (updatedProductType: ProductType) => {
+    const updateProductType = useCallback((updatedProductType: ProductType) => {
         setProductTypes(prev => prev.map(pt => pt.id === updatedProductType.id ? updatedProductType : pt));
         addToast('Product type updated!', 'info');
-    };
+    }, [setProductTypes, addToast]);
 
-    const deleteProductType = (productTypeId: string) => {
+    const deleteProductType = useCallback((productTypeId: string) => {
         setProductTypes(prev => prev.filter(pt => pt.id !== productTypeId));
         addToast('Product type deleted!', 'warning');
-    };
+    }, [setProductTypes, addToast]);
 
-    const addSupplier = (newSupplier: Omit<Supplier, 'id'>) => {
+    const addSupplier = useCallback((newSupplier: Omit<Supplier, 'id'>) => {
         const supplier: Supplier = {
             ...newSupplier,
             id: `SUP${Date.now()}`,
@@ -74,25 +73,34 @@ export const MasterDataProvider: React.FC<{ children: ReactNode }> = ({ children
         setSuppliers(prev => [...prev, supplier]);
         addToast('Supplier added successfully!', 'success');
         return supplier;
-    };
+    }, [setSuppliers, addToast]);
 
-    const updateSupplier = (updatedSupplier: Supplier) => {
+    const updateSupplier = useCallback((updatedSupplier: Supplier) => {
         setSuppliers(prev => prev.map(s => s.id === updatedSupplier.id ? updatedSupplier : s));
         addToast('Supplier details updated!', 'info');
-    };
+    }, [setSuppliers, addToast]);
 
-    const deleteSupplier = (supplierId: string) => {
+    const deleteSupplier = useCallback((supplierId: string) => {
         setSuppliers(prev => prev.filter(s => s.id !== supplierId));
         addToast('Supplier deleted!', 'warning');
-    };
+    }, [setSuppliers, addToast]);
+
+    // Memoized context value: consumers only re-render when the underlying
+    // collections actually change.
+    const contextValue = useMemo(() => ({
+        isLoading,
+        productTypes, addProductType, updateProductType, deleteProductType,
+        suppliers, addSupplier, updateSupplier, deleteSupplier,
+        customerProfiles, upsertCustomerProfile, getCustomerProfile,
+    }), [
+        isLoading,
+        productTypes, addProductType, updateProductType, deleteProductType,
+        suppliers, addSupplier, updateSupplier, deleteSupplier,
+        customerProfiles, upsertCustomerProfile, getCustomerProfile,
+    ]);
 
     return (
-        <MasterDataContext.Provider value={{ 
-            isLoading,
-            productTypes, addProductType, updateProductType, deleteProductType,
-            suppliers, addSupplier, updateSupplier, deleteSupplier,
-            customerProfiles, upsertCustomerProfile, getCustomerProfile,
-        }}>
+        <MasterDataContext.Provider value={contextValue}>
             {children}
         </MasterDataContext.Provider>
     );

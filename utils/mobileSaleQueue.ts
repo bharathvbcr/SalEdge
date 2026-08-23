@@ -21,7 +21,12 @@ export function getSaleQueue(): MobileSaleQueueItem[] {
 }
 
 export function setSaleQueue(items: MobileSaleQueueItem[]) {
-    sessionStorage.setItem(QUEUE_KEY, JSON.stringify(items));
+    // Quota/security errors must not break the scan flow mid-batch.
+    try {
+        sessionStorage.setItem(QUEUE_KEY, JSON.stringify(items));
+    } catch {
+        /* storage unavailable — queue stays in memory only */
+    }
 }
 
 export function addToSaleQueue(item: MobileSaleQueueItem): MobileSaleQueueItem[] {

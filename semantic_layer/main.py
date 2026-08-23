@@ -13,8 +13,8 @@ from semantic_layer.backends.base import BaseInferenceBackend
 from semantic_layer.backends.huggingface import HuggingFaceBackend
 from semantic_layer.backends.llamacpp import LlamaCppBackend
 from semantic_layer.backends.ollama import OllamaBackend
-from semantic_layer.cache import SemanticCache
-from semantic_layer.threshold import ThresholdConfig, ThresholdTuner
+from semantic_layer.cache import CacheConfig, SemanticCache
+from semantic_layer.threshold import ThresholdConfig
 from semantic_layer.compressor import DocumentChunk, SemanticCompressor
 from semantic_layer.config import InferenceBackend, SemanticLayerConfig
 from semantic_layer.embedder import EmbedderService
@@ -32,12 +32,26 @@ metrics = SemanticMetrics()
 backend: BaseInferenceBackend | None = None
 
 
-def resolve_tier_models(cfg: SemanticLayerConfig) -> tuple[str, str, str]:
-    """Use env overrides when set; otherwise discover from Ollama /api/tags."""
+def resolve_tier_models(cfg: SemanticLayerConfig) -> tuple[str | None, str | None, str | None]:
+    """Use env overrides when set; otherwise discover from Ollama /api/tags.
+
+    Falls back to neutral placeholder tiers (all ``None``) when discovery
+    fails so routing degrades instead of crashing at startup.
+    """
     if cfg.tier_small_model and cfg.tier_medium_model and cfg.tier_large_model:
         return cfg.tier_small_model, cfg.tier_medium_model, cfg.tier_large_model
 
-    small, medium, large = discover_tier_models(cfg.ollama_base_url)
+    try:
+        small, medium, large = discover_tier_models(cfg.ollama_base_url)
+    except RuntimeError as exc:
+        logger.warning(
+            "Ollama tier-model discovery failed (%s); falling back to unassigned "
+            "tiers — requests will fail at inference until models are configured "
+            "via SEMANTIC_TIER_*_MODEL or Ollama becomes reachable",
+            exc,
+        )
+        return None, None, None
+
     logger.info(
         "Discovered Ollama tier models: small=%s medium=%s large=%s",
         small,
@@ -70,14 +84,15 @@ def create_orchestrator(
         model_name=cfg.embedder_model,
         device=cfg.embedder_device,
         normalize=cfg.normalize_embeddings,
+        batch_size=cfg.embedder_batch_size,
     )
     cache = SemanticCache(
-        cache_dir=cfg.cache_dir,
-        max_entries=cfg.cache_max_entries,
-        ttl_seconds=cfg.cache_ttl_seconds,
-        initial_threshold=cfg.similarity_threshold,
-        threshold_tuner=ThresholdTuner(
-            ThresholdConfig(
+        config=CacheConfig(
+            cache_dir=cfg.cache_dir,
+            max_entries=cfg.cache_max_entries,
+            ttl_seconds=cfg.cache_ttl_seconds,
+            vector_backend=cfg.vector_backend.value,  # "faiss" | "chroma" (normalized in cache)
+            threshold=ThresholdConfig(
                 initial_threshold=cfg.similarity_threshold,
                 threshold_min=cfg.threshold_min,
                 threshold_max=cfg.threshold_max,
@@ -206,12 +221,16 @@ def cache_feedback(body: FeedbackInput) -> dict[str, str]:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict[str, str]:
+    # Echoed so the Node launcher can verify it reached ITS child rather than
+    # a stale orphan of a previous app version occupying the port.
+    import os
+
+    return {"status": "ok", "instance": os.environ.get("SEMANTIC_INSTANCE_TOKEN", "")}
 
 
 @app.get("/metrics")
-def prometheus_metrics() -> Response:
+async def prometheus_metrics() -> Response:
     return Response(content=metrics.to_prometheus_text(), media_type="text/plain; version=0.0.4")
 
 

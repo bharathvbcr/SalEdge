@@ -65,6 +65,10 @@ export type SaleTotals = {
     isFinalPriceOverridden: boolean;
     pricingMode: PricingMode;
     clubBuybackWithDiscount: boolean;
+    /** Reconciled component splits (paise-exact; CGST+SGST+IGST === taxAmount). */
+    totalCgst?: number;
+    totalSgst?: number;
+    totalIgst?: number;
 };
 
 export type InventorySuggestion = {

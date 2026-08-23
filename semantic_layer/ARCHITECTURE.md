@@ -1,7 +1,7 @@
 # Semantic Layer — Production Architecture Blueprint
 
 > **Target:** <15 ms p95 semantic-layer overhead (excluding LLM inference) on edge hardware.  
-> **Stack:** `all-MiniLM-L6-v2` (384-d) + FAISS `IndexFlatIP` + adaptive threshold + tiered routing + RAG compression.
+> **Stack:** `all-MiniLM-L6-v2` (384-d) + FAISS `IndexFlatIP` (default; optional ChromaDB backend) + adaptive threshold + tiered routing + RAG compression.
 
 ---
 
@@ -28,7 +28,7 @@
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │  STAGE 1: SEMANTIC CACHE (Vector DB Interceptor)              ~0.1–0.5 ms       │
 │  ─────────────────────────────────────────────────────────────────────────────  │
-│  FAISS IndexFlatIP top-1 search → cosine similarity sim                         │
+│  FAISS IndexFlatIP top-10 search → cosine similarity sim                        │
 │  τ_eff = clip(τ + γ·max(0, z_ood − δ), τ_min, τ_max)                           │
 │                                                                                 │
 │  IF sim ≥ τ_eff AND entry NOT expired → CACHE HIT → return response           │
@@ -152,9 +152,15 @@ f_syn = syntactic_heuristics(q) / 5         code blocks, reasoning verbs, multi-
 f_sem = max_i ( prototype_i · e(q) )        similarity to "hard query" prototypes
 
 Routing:
-  C < 0.4  → SMALL  (phi3:mini, 256 tokens, T=0.3)
-  C < 0.7  → MEDIUM (llama3.2:3b, 1024 tokens, T=0.5)
-  C ≥ 0.7  → LARGE  (llama3.1:8b, 4096 tokens, T=0.7)
+   C < 0.4  → SMALL   (256 tokens, T=0.3)
+   C < 0.7  → MEDIUM  (1024 tokens, T=0.5)
+   C ≥ 0.7  → LARGE   (4096 tokens, T=0.7)
+
+Tier models are NOT fixed: they are discovered at startup from the Ollama
+model catalog (/api/tags) — smallest/median/largest completion-capable model
+per tier — or pinned via SEMANTIC_TIER_SMALL_MODEL / _MEDIUM_ / _LARGE_ env
+vars. If discovery fails, tiers fall back to unassigned and requests fail at
+the inference stage instead of crashing startup.
 ```
 
 ### RAG Context Compression
@@ -191,6 +197,7 @@ The implementation lives in `semantic_layer/`. Key modules:
 | `router.py`       | Complexity scoring, tier selection                    |
 | `compressor.py`   | RAG relevance filtering + token budget packing      |
 | `orchestrator.py` | Pipeline coordinator with latency budget enforcement|
+| `ollama_discovery.py` | Tier-model discovery from the Ollama `/api/tags` catalog |
 | `main.py`         | FastAPI server (port 8090)                          |
 | `benchmark.py`    | Per-component latency harness                       |
 
@@ -232,9 +239,10 @@ curl -X POST http://127.0.0.1:8090/v1/query \
 
 1. **TTL (time-to-live):** Default 86,400 s (24 h). Expired entries purged on lookup/store.
 2. **LRU eviction:** When `len(entries) ≥ max_entries` (10,000), evict oldest by access order.
-3. **Index rebuild:** Triggered on eviction batches (every 500 removals or full clear) to keep FAISS consistent.
-4. **Feedback invalidation:** False-positive feedback raises τ; does not delete entries (conservative).
-5. **Persistence:** JSON files per entry in `cache_dir`; rebuilt into FAISS on startup.
+3. **Index rebuild:** Triggered after every 500 removals since the last rebuild (or when the index empties) to keep FAISS consistent. Lookups inspect the top-10 neighbours and skip tombstoned vectors left in the index between rebuilds.
+4. **Feedback invalidation:** False-positive feedback raises τ AND deletes the flagged entry so it is not served again.
+5. **Context scoping:** Each entry stores a `context_key` fingerprint of the RAG chunks present at store time; a lookup only hits when the request carries the *same* context. Identical questions over different business data or reporting periods never share a stale cached answer.
+6. **Persistence:** JSON files per entry in `cache_dir` (written atomically via tmp-file + rename); rebuilt into FAISS on startup; expired/corrupt files are removed at load time.
 
 ---
 
@@ -342,7 +350,7 @@ curl http://127.0.0.1:8090/metrics/snapshot
 **Response:**
 1. Increment `semantic_cache_false_positive_total`
 2. Feed into `ThresholdTuner.record_feedback()` → raises τ
-3. Optional: invalidate specific entry by ID (future enhancement)
+3. Invalidate (delete) the flagged entry by ID so the same wrong answer is never served again
 
 ### Stale Cache Entries
 
@@ -354,6 +362,8 @@ curl http://127.0.0.1:8090/metrics/snapshot
 
 **Behavior:** `health_check()` warns at startup; inference fails with HTTP 500 from backend.
 **Fallback:** Node.js app (`semanticLayerClient.ts`) falls back to direct Ollama if semantic layer unreachable.
+
+**Stale-process guard:** `GET /health` echoes an `instance` token from `SEMANTIC_INSTANCE_TOKEN`, so the Node launcher can verify it reached *its own* child process rather than a stale orphan of a previous app version occupying the port.
 
 ---
 

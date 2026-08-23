@@ -1,5 +1,16 @@
 import { Request, Response } from 'express';
-import { getData, setData, getAllData, setBulkData, clearAllData } from '../db.js';
+import {
+    getData,
+    getAllData,
+    getAllDataVersions,
+    setBulkData,
+    clearAllData,
+    putDataStrict,
+    createDataSnapshot,
+    listBackups,
+    backupDatabase,
+} from '../db.js';
+import { appendAuditLog } from './audit.js';
 
 const ALLOWED_KEYS = new Set([
     'inventory',
@@ -12,7 +23,6 @@ const ALLOWED_KEYS = new Set([
     'purchases',
     'purchaseInvoiceQueue',
     'paymentVouchers',
-    'auditLogs',
     'productTypes',
     'suppliers',
     'customerProfiles',
@@ -22,7 +32,9 @@ const ALLOWED_KEYS = new Set([
 ]);
 
 export function getAllDataHandler(_req: Request, res: Response): void {
-    res.json(getAllData());
+    // Bulk boot payload: collections plus their OCC versions under a reserved
+    // key (imports whitelist ALLOWED_KEYS, so __versions is never persisted).
+    res.json({ ...getAllData(), __versions: getAllDataVersions() });
 }
 
 export function getDataHandler(req: Request, res: Response): void {
@@ -48,9 +60,25 @@ export function putDataHandler(req: Request, res: Response): void {
 
     const body = req.body as { value?: unknown; version?: number; data?: unknown };
     const value = body.value !== undefined ? body.value : body;
-    const expectedVersion = typeof body.version === 'number' ? body.version : undefined;
 
-    const result = setData(key, value, expectedVersion);
+    if (typeof body.version !== 'number' || !Number.isInteger(body.version) || body.version < 0) {
+        // Optimistic concurrency is mandatory: a write without the current
+        // version may only create a brand-new key.
+        const result = putDataStrict(key, value);
+        if (!result.ok) {
+            const current = getData(key);
+            res.status(409).json({
+                error: 'Version required to modify existing data. Refetch and retry.',
+                version: result.version,
+                data: current?.value,
+            });
+            return;
+        }
+        res.json({ ok: true, version: result.version });
+        return;
+    }
+
+    const result = putDataStrict(key, value, body.version);
     if (!result.ok) {
         const current = getData(key);
         res.status(409).json({
@@ -66,7 +94,7 @@ export function putDataHandler(req: Request, res: Response): void {
 
 export function bulkImportHandler(req: Request, res: Response): void {
     const data = req.body as Record<string, unknown>;
-    if (!data || typeof data !== 'object') {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
         res.status(400).json({ error: 'Invalid import payload' });
         return;
     }
@@ -83,11 +111,67 @@ export function bulkImportHandler(req: Request, res: Response): void {
         return;
     }
 
+    // Safety net: snapshot current books before overwriting anything.
+    const snapshotKey = createDataSnapshot(`pre-import by ${req.user?.username ?? 'unknown'}`);
+
     setBulkData(filtered);
-    res.json({ ok: true, imported: Object.keys(filtered) });
+    appendAuditLog({
+        userId: req.user?.userId,
+        username: req.user?.username ?? 'unknown',
+        role: req.user?.role ?? 'system',
+        action: 'DATA_IMPORT',
+        entityType: 'AppData',
+        entityId: Object.keys(filtered).join(','),
+        details: `Imported ${Object.keys(filtered).length} collection(s); prior state saved to ${snapshotKey}`,
+    });
+
+    res.json({ ok: true, imported: Object.keys(filtered), snapshotKey });
 }
 
-export function resetDataHandler(_req: Request, res: Response): void {
+export function resetDataHandler(req: Request, res: Response): void {
+    const { confirmText } = req.body as { confirmText?: string };
+    if (confirmText !== 'RESET') {
+        res.status(400).json({ error: 'Reset requires confirmText "RESET" in the request body.' });
+        return;
+    }
+
+    const snapshotKey = createDataSnapshot(`pre-reset by ${req.user?.username ?? 'unknown'}`);
     clearAllData();
-    res.json({ ok: true });
+
+    appendAuditLog({
+        userId: req.user?.userId,
+        username: req.user?.username ?? 'unknown',
+        role: req.user?.role ?? 'system',
+        action: 'DATA_RESET',
+        entityType: 'AppData',
+        details: `All collections cleared; prior state saved to ${snapshotKey}`,
+    });
+
+    res.json({ ok: true, snapshotKey });
+}
+
+// ---------------------------------------------------------------------------
+// Backups
+// ---------------------------------------------------------------------------
+
+export async function createBackupHandler(req: Request, res: Response): Promise<void> {
+    try {
+        const file = await backupDatabase();
+        appendAuditLog({
+            userId: req.user?.userId,
+            username: req.user?.username ?? 'unknown',
+            role: req.user?.role ?? 'system',
+            action: 'BACKUP_CREATED',
+            entityType: 'Database',
+            details: file,
+        });
+        res.status(201).json({ ok: true, file });
+    } catch (err) {
+        console.error('[backup] failed:', err instanceof Error ? err.message : err);
+        res.status(500).json({ error: 'Backup failed' });
+    }
+}
+
+export function listBackupsHandler(_req: Request, res: Response): void {
+    res.json({ backups: listBackups() });
 }

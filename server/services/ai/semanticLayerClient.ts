@@ -35,6 +35,7 @@ function normalizeBaseUrl(url: string): string {
 export async function checkSemanticLayerHealth(
     baseUrl: string,
     timeoutMs = 3000,
+    options?: { expectInstance?: string },
 ): Promise<SemanticHealthStatus> {
     const url = normalizeBaseUrl(baseUrl);
     const controller = new AbortController();
@@ -45,9 +46,6 @@ export async function checkSemanticLayerHealth(
         const res = await fetch(`${url}/health`, { signal: controller.signal });
         const latencyMs = Date.now() - started;
         if (!res.ok) {
-            // #region agent log
-            fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H1',location:'server/services/ai/semanticLayerClient.ts:checkSemanticLayerHealth',message:'Health check HTTP error',data:{url,status:res.status,latencyMs},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
             return {
                 available: false,
                 url,
@@ -59,14 +57,26 @@ export async function checkSemanticLayerHealth(
         let bodyJson: Record<string, unknown> = {};
         try { bodyJson = JSON.parse(bodyText) as Record<string, unknown>; } catch { /* ignore */ }
         const isBsmsSemantic = bodyJson.status === 'ok' && !('service' in bodyJson);
-        // #region agent log
-        fetch('http://127.0.0.1:7410/ingest/11210a20-398c-4579-9076-302a1d1ea18d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a96a9c'},body:JSON.stringify({sessionId:'a96a9c',runId:'audit',hypothesisId:'H1',location:'server/services/ai/semanticLayerClient.ts:checkSemanticLayerHealth',message:'Health check body inspected',data:{url,latencyMs,isBsmsSemantic,bodyKeys:Object.keys(bodyJson),foreignService:typeof bodyJson.service==='string'?bodyJson.service:null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         if (!isBsmsSemantic) {
             return {
                 available: false,
                 url,
                 message: `Port ${url} is occupied by another service (${String(bodyJson.service ?? 'unknown')}), not the BSMS semantic layer.`,
+                latencyMs,
+            };
+        }
+        // A stale orphan of a PREVIOUS app build can occupy the port and pass
+        // the generic fingerprint — reject version mismatches outright.
+        if (
+            options?.expectInstance !== undefined &&
+            typeof bodyJson.instance === 'string' &&
+            bodyJson.instance.length > 0 &&
+            bodyJson.instance !== options.expectInstance
+        ) {
+            return {
+                available: false,
+                url,
+                message: 'Stale semantic layer instance detected (previous build). Restarting…',
                 latencyMs,
             };
         }

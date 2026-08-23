@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useAppData } from '../context/AppDataContext.tsx';
 import { useMasterData } from '../context/MasterDataContext.tsx';
 import { AddStockModal } from './AddStockModal.tsx';
@@ -16,6 +16,7 @@ import { BarcodeModal } from './BarcodeModal.tsx';
 import { StockTakeModal } from './StockTakeModal.tsx';
 import { PageHeader } from './PageHeader.tsx';
 import { SearchInput } from './SearchInput.tsx';
+import { PaginationBar } from './PaginationBar.tsx';
 import { Modal, ModalHeader, ModalFooter } from './Modal.tsx';
 import { FormField } from './FormField.tsx';
 import { useToast } from '../context/ToastContext.tsx';
@@ -202,6 +203,8 @@ export const InventoryPage: React.FC = () => {
     const [lowStockOnly, setLowStockOnly] = useState(false);
     const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
     const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'name', direction: 'asc' });
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(25);
     const [itemToAdjust, setItemToAdjust] = useState<InventoryItem | null>(null);
     const [itemForHistory, setItemForHistory] = useState<InventoryItem | null>(null);
     const [itemToPrintBarcode, setItemToPrintBarcode] = useState<InventoryItem | null>(null);
@@ -311,6 +314,23 @@ export const InventoryPage: React.FC = () => {
 
         return products;
     }, [productTypes, stockInventory, searchQuery, sortConfig, lowStockOnly]);
+
+    const totalPages = Math.ceil(filteredAndSortedProducts.length / itemsPerPage) || 1;
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, lowStockOnly, sortConfig, activeTab, itemsPerPage]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
+    const paginatedProducts = useMemo(() => {
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        return filteredAndSortedProducts.slice(startIndex, startIndex + itemsPerPage);
+    }, [filteredAndSortedProducts, currentPage, itemsPerPage]);
 
 
     const getPriceRange = (items: InventoryItem[], key: 'purchasePrice' | 'mrp') => {
@@ -470,7 +490,7 @@ export const InventoryPage: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredAndSortedProducts.length > 0 ? filteredAndSortedProducts.map((p) => {
+                                {paginatedProducts.length > 0 ? paginatedProducts.map((p) => {
                                     const stockStatus = getStockStatus(p);
                                     const isExpanded = expandedProductId === p.id || (searchQuery.length > 0 && p.inventoryItems.length > 0);
                                     
@@ -619,9 +639,16 @@ export const InventoryPage: React.FC = () => {
                             </tbody>
                         </table>
                     </div>
+                    <PaginationBar
+                        currentPage={currentPage}
+                        totalPages={totalPages}
+                        onPageChange={setCurrentPage}
+                        itemsPerPage={itemsPerPage}
+                        onItemsPerPageChange={setItemsPerPage}
+                    />
                 </div>
             )}
-            
+
             {activeTab === 'scrap' && (
                 <div className="card-section-padded">
                      <h3 className="text-lg font-bold text-text-primary mb-4">Old / Scrap Batteries</h3>

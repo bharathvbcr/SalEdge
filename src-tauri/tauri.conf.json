@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Battery Shop Management System",
-  "version": "0.1.0",
-  "identifier": "com.bsms.desktop",
+  "productName": "SalEdge",
+  "version": "0.2.0",
+  "identifier": "com.saledge.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Battery Shop Management System",
+        "title": "SalEdge",
         "url": "http://127.0.0.1:13001",
         "visible": false,
         "width": 1280,
@@ -25,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' http://localhost:* http://127.0.0.1:* https://cdn.tailwindcss.com https://fonts.googleapis.com https://fonts.gstatic.com https://aistudiocdn.com; connect-src 'self' http://localhost:* http://127.0.0.1:* https://cdn.tailwindcss.com https://aistudiocdn.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://aistudiocdn.com"
+      "csp": "default-src 'self' http://localhost:* http://127.0.0.1:* https://fonts.googleapis.com https://fonts.gstatic.com https://aistudiocdn.com; connect-src 'self' http://localhost:* http://127.0.0.1:* https://aistudiocdn.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' https://aistudiocdn.com"
     }
   },
   "bundle": {

@@ -1,4 +1,5 @@
 import { WarrantyLog } from '../types.ts';
+import { calendarDaysUntil, isOnOrBeforeDay } from './warrantyDates.ts';
 
 export interface WarrantyStatus {
     text: 'In Guarantee' | 'In Warranty' | 'Expired' | 'Not Sold';
@@ -8,25 +9,25 @@ export interface WarrantyStatus {
 }
 
 export function getWarrantyStatus(log: WarrantyLog): WarrantyStatus {
+    // Compare on LOCAL CALENDAR DAYS so coverage doesn't lapse mid-morning of
+    // the expiry day for IST users (ends were stored as UTC instants).
     const now = new Date();
     const guaranteeEnd = new Date(log.guaranteeEndDate);
     const warrantyEnd = new Date(log.warrantyEndDate);
 
-    if (now <= guaranteeEnd) {
-        const days = Math.ceil((guaranteeEnd.getTime() - now.getTime()) / 86400000);
+    if (isOnOrBeforeDay(now, guaranteeEnd)) {
         return {
             text: 'In Guarantee',
             className: 'bg-status-green-bg text-status-green-text',
-            daysRemaining: days,
+            daysRemaining: Math.max(0, calendarDaysUntil(guaranteeEnd, now)),
             phase: 'guarantee',
         };
     }
-    if (now <= warrantyEnd) {
-        const days = Math.ceil((warrantyEnd.getTime() - now.getTime()) / 86400000);
+    if (isOnOrBeforeDay(now, warrantyEnd)) {
         return {
             text: 'In Warranty',
             className: 'bg-status-yellow-bg text-status-yellow-text',
-            daysRemaining: days,
+            daysRemaining: Math.max(0, calendarDaysUntil(warrantyEnd, now)),
             phase: 'warranty',
         };
     }

@@ -1,5 +1,4 @@
-
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
 
 type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -29,8 +28,16 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setToasts(prevToasts => prevToasts.filter(toast => toast.id !== id));
     }, []);
 
+    // Memoized so a transient toast does not re-render every context consumer
+    // in the tree (AppDataProvider consumes useToast for save-failure toasts).
+    const contextValue = useMemo(() => ({
+        toasts,
+        addToast,
+        removeToast,
+    }), [toasts, addToast, removeToast]);
+
     return (
-        <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
+        <ToastContext.Provider value={contextValue}>
             {children}
         </ToastContext.Provider>
     );

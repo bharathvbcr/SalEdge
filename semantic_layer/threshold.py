@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -32,6 +33,9 @@ class ThresholdState:
 
     queries: int = 0
     hits: int = 0
+    # Bounded window of recent hit/miss outcomes; mirrors the feedback window
+    # so hr_hat reflects current traffic instead of lifetime-cumulative rates.
+    hit_window: deque[bool] = field(default_factory=deque)
     feedback: list[tuple[float, bool]] = field(default_factory=list)
 
 
@@ -71,6 +75,7 @@ class ThresholdTuner:
             )
         self._threshold = self.config.initial_threshold
         self._state = ThresholdState()
+        self._state.hit_window = deque(maxlen=self.config.feedback_window)
 
     @property
     def threshold(self) -> float:
@@ -80,6 +85,7 @@ class ThresholdTuner:
         self._state.queries += 1
         if was_hit:
             self._state.hits += 1
+        self._state.hit_window.append(was_hit)
 
     def record_feedback(self, similarity: float, was_valid: bool) -> None:
         """Record user or LLM-judge feedback on a cache hit."""
@@ -107,7 +113,10 @@ class ThresholdTuner:
 
         fp_count = sum(1 for _, valid in self._state.feedback if not valid)
         fpr_hat = fp_count / len(self._state.feedback)
-        hr_hat = self._state.hits / max(self._state.queries, 1)
+        if self._state.hit_window:
+            hr_hat = sum(self._state.hit_window) / len(self._state.hit_window)
+        else:
+            hr_hat = self._state.hits / max(self._state.queries, 1)
 
         cfg = self.config
         old = self._threshold

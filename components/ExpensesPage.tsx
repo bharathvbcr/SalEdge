@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useAppData } from '../context/AppDataContext.tsx';
 import { Expense } from '../types.ts';
 import { IconPlus, IconTrash, IconReceipt } from './icons.tsx';
@@ -8,6 +8,7 @@ import { EmptyState } from './EmptyState.tsx';
 import { ConfirmationModal } from './ConfirmationModal.tsx';
 import { PageHeader } from './PageHeader.tsx';
 import { SearchInput } from './SearchInput.tsx';
+import { PaginationBar } from './PaginationBar.tsx';
 import { useConfig } from '../context/ConfigContext.tsx';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { useTheme } from '../context/ThemeContext.tsx';
@@ -24,6 +25,8 @@ export const ExpensesPage: React.FC = () => {
     const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [formPrefill, setFormPrefill] = useState<ExpenseFormPrefill | null>(null);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(25);
 
     const applyExpenseFormIntent = useCallback(() => {
         const request = consumeOpenExpenseFormRequest();
@@ -44,6 +47,23 @@ export const ExpensesPage: React.FC = () => {
             e.category.toLowerCase().includes(lowerQuery)
         );
     }, [expenses, searchQuery]);
+
+    const totalPages = Math.ceil(filteredExpenses.length / itemsPerPage) || 1;
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, expenses, itemsPerPage]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
+    const paginatedExpenses = useMemo(() => {
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        return filteredExpenses.slice(startIndex, startIndex + itemsPerPage);
+    }, [filteredExpenses, currentPage, itemsPerPage]);
     
     const chartData = useMemo(() => {
         const data: Record<string, number> = {};
@@ -142,7 +162,7 @@ export const ExpensesPage: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredExpenses.length > 0 ? filteredExpenses.map((e) => (
+                            {filteredExpenses.length > 0 ? paginatedExpenses.map((e) => (
                                 <tr key={e.id} className="border-b border-border-color hover:bg-bg-tertiary">
                                     <td className="p-4">{new Date(e.date).toLocaleDateString()}</td>
                                     <td className="p-4"><span className="px-2 py-1 text-xs font-medium rounded-full bg-status-blue-bg text-status-blue-text">{e.category}</span></td>
@@ -166,6 +186,13 @@ export const ExpensesPage: React.FC = () => {
                         </tbody>
                     </table>
                 </div>
+                <PaginationBar
+                    currentPage={currentPage}
+                    totalPages={totalPages}
+                    onPageChange={setCurrentPage}
+                    itemsPerPage={itemsPerPage}
+                    onItemsPerPageChange={setItemsPerPage}
+                />
             </div>
 
             {isFormOpen && (

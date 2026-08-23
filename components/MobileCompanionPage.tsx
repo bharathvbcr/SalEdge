@@ -27,7 +27,8 @@ import { MobileModelPickerSheet } from './mobile/MobileModelPickerSheet.tsx';
 import { MobileConnectPanel } from './MobileConnectPanel.tsx';
 import { SharedStockHint } from './SharedStockHint.tsx';
 import { DEFAULT_SALE_CATEGORIES } from '../constants.ts';
-import { extractGstFromFinal } from '../utils/salePricing.ts';
+import { extractGstFromFinalMulti } from '../utils/salePricing.ts';
+import { getGstRateForHsn, splitTaxAmount } from '../indianGST.ts';
 
 type MobileMode = 'scan' | 'sale' | 'add' | 'count' | 'inventory' | 'warranty' | 'purchase';
 
@@ -612,9 +613,16 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
         const taxRegime = activeFirm?.financials.taxRegime ?? 'Composition';
         const gstRate = activeFirm?.financials.gstRate ?? 0;
         const total = subtotal;
-        const { taxAmount } = extractGstFromFinal(total, gstRate, taxRegime);
+        // Per-item HSN rates so mixed-brand carts are taxed correctly.
+        const buckets = queue.flatMap(q => {
+            const inv = inventory.find(i => i.id === q.inventoryItemId);
+            if (!inv || inv.stock <= 0) return [];
+            const pt = productTypes.find(p => p.id === inv.productTypeId);
+            return [{ rate: getGstRateForHsn(pt?.hsnCode) ?? gstRate, net: inv.mrp }];
+        });
+        const { taxAmount } = extractGstFromFinalMulti(total, gstRate, taxRegime, buckets);
         return { subtotal, total, taxAmount, taxRegime };
-    }, [inventory, activeFirm]);
+    }, [inventory, productTypes, activeFirm]);
 
     const executeQuickSale = useCallback(() => {
         const queue = getSaleQueue();
@@ -641,6 +649,8 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
                 purchasePrice: inv.purchasePrice,
                 serialNumbers: serial,
                 discount: { type: 'fixed', value: 0 },
+                hsnCode: pt?.hsnCode,
+                gstRate: getGstRateForHsn(pt?.hsnCode),
                 guaranteePeriodMonths: pt?.defaultGuaranteeMonths ?? 0,
                 warrantyPeriodMonths: pt?.defaultWarrantyMonths ?? 0,
             });
@@ -663,7 +673,13 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
         const taxRegime = activeFirm?.financials.taxRegime ?? 'Composition';
         const gstRate = activeFirm?.financials.gstRate ?? 0;
         const total = subtotal;
-        const { taxAmount } = extractGstFromFinal(total, gstRate, taxRegime);
+        // Per-item HSN rates + reconciled component split (matches desktop POS).
+        const buckets = items.map(item => ({
+            rate: item.gstRate ?? gstRate,
+            net: item.price * item.quantity,
+        }));
+        const { taxAmount } = extractGstFromFinalMulti(total, gstRate, taxRegime, buckets);
+        const splits = splitTaxAmount(taxAmount, false);
 
         addTransaction({
             firmId,
@@ -677,6 +693,9 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
             taxRegime,
             taxAmount,
             total,
+            totalCgst: splits.cgst,
+            totalSgst: splits.sgst,
+            totalIgst: 0,
             priceIncludesTax: true,
             payments: [{ method: 'Cash', amount: total }],
             status: 'Paid',

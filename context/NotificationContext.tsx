@@ -124,20 +124,30 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
 
     const unreadCount = useMemo(() => notifications.filter(n => !n.read).length, [notifications]);
 
-    const markAsRead = (id: string) => {
+    const markAsRead = useCallback((id: string) => {
         setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-    };
+    }, []);
 
-    const markAllRead = () => {
+    const markAllRead = useCallback(() => {
         setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    };
+    }, []);
 
-    const dismissNotification = (id: string) => {
+    const dismissNotification = useCallback((id: string) => {
         setNotifications(prev => prev.filter(n => n.id !== id));
-    };
+    }, []);
+
+    // Memoized so provider re-renders (e.g. reminder syncs) do not recreate
+    // the value identity for every consumer.
+    const contextValue = useMemo(() => ({
+        notifications,
+        unreadCount,
+        markAsRead,
+        markAllRead,
+        dismissNotification,
+    }), [notifications, unreadCount, markAsRead, markAllRead, dismissNotification]);
 
     return (
-        <NotificationContext.Provider value={{ notifications, unreadCount, markAsRead, markAllRead, dismissNotification }}>
+        <NotificationContext.Provider value={contextValue}>
             {children}
         </NotificationContext.Provider>
     );

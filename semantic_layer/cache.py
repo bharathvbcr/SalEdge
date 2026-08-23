@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -33,6 +34,10 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 VectorBackend = Literal["faiss", "chromadb"]
+
+# Rebuild the FAISS index after this many removals so tombstoned vectors do
+# not accumulate and degrade top-k search quality over time.
+_REBUILD_REMOVAL_THRESHOLD = 500
 
 
 @dataclass(slots=True)
@@ -114,8 +119,14 @@ class SemanticCache:
         self._index = faiss.IndexFlatIP(EMBED_DIM)
         self._tuner = threshold_tuner or ThresholdTuner(self.config.threshold)
         self._chroma_collection = None
-        if self.config.vector_backend == "chromadb":
+        # Normalize once: accept both "chroma" and "chromadb" spellings.
+        backend = str(self.config.vector_backend).strip().lower()
+        if backend == "chroma":
+            backend = "chromadb"
+        self.config.vector_backend = backend
+        if backend == "chromadb":
             self._init_chroma()
+        self._removals_since_rebuild = 0
         self._load_persisted()
 
     def _init_chroma(self) -> None:
@@ -181,8 +192,8 @@ class SemanticCache:
                 if entry.is_expired():
                     self._remove_entry(entry_id)
                     continue
-                if context_key is not None and entry.metadata.get("context_key") != context_key:
-                    continue  # same question, different underlying data — not a valid hit
+                if (entry.metadata.get("context_key") or "") != (context_key or ""):
+                    continue  # same question, different underlying data (or none) — not a valid hit
 
                 self._entries.move_to_end(entry_id)
                 entry.last_accessed = time.time()
@@ -275,9 +286,12 @@ class SemanticCache:
         wrong cached answer is not served again, rather than only nudging the
         global threshold.
         """
-        self._tuner.record_feedback(similarity, was_valid)
-        if entry_id and not was_valid:
-            self.invalidate(entry_id)
+        # Lookup paths mutate tuner state while holding self._lock; do the same
+        # here so concurrent lookups/feedback cannot interleave on the tuner.
+        with self._lock:
+            self._tuner.record_feedback(similarity, was_valid)
+            if entry_id and not was_valid:
+                self.invalidate(entry_id)
 
     def invalidate(self, entry_id: str) -> bool:
         """Remove a specific cached answer. Returns True if it existed."""
@@ -293,7 +307,7 @@ class SemanticCache:
             self._remove_entry(oldest_id)
 
     def _remove_entry(self, entry_id: str) -> None:
-        self._entries.pop(entry_id, None)
+        existed = self._entries.pop(entry_id, None) is not None
         faiss_idx = self._id_to_faiss_idx.pop(entry_id, None)
         if faiss_idx is not None:
             self._faiss_idx_to_id.pop(faiss_idx, None)
@@ -308,7 +322,10 @@ class SemanticCache:
             (self.cache_dir / f"{entry_id}.json").unlink(missing_ok=True)
         except OSError as exc:
             logger.debug("Could not delete cache file for %s: %s", entry_id, exc)
-        if len(self._entries) == 0 or len(self._entries) % 500 == 0:
+        if existed:
+            self._removals_since_rebuild += 1
+        if len(self._entries) == 0 or self._removals_since_rebuild >= _REBUILD_REMOVAL_THRESHOLD:
+            self._removals_since_rebuild = 0
             self._rebuild_index()
 
     def _rebuild_index(self) -> None:
@@ -339,7 +356,9 @@ class SemanticCache:
             "metadata": entry.metadata,
             "access_count": entry.access_count,
         }
-        path.write_text(json.dumps(payload))
+        tmp_path = path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(payload))
+        os.replace(tmp_path, path)
 
     def _load_persisted(self) -> None:
         for path in self.cache_dir.glob("*.json"):
@@ -359,8 +378,17 @@ class SemanticCache:
                 )
                 if not entry.is_expired():
                     self._entries[entry.id] = entry
+                else:
+                    self._unlink_persisted(path, reason="expired")
             except (json.JSONDecodeError, KeyError) as exc:
                 logger.warning("Skipping corrupt cache file %s: %s", path, exc)
+                self._unlink_persisted(path, reason="corrupt")
 
         self._rebuild_index()
         logger.info("Loaded %d cache entries", len(self._entries))
+
+    def _unlink_persisted(self, path: Path, *, reason: str) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug("Could not delete %s cache file %s: %s", reason, path, exc)

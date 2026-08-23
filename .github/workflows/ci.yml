@@ -9,8 +9,8 @@ on:
 
 jobs:
   validate:
-    name: Typecheck, Build & Cargo Check
-    runs-on: ubuntu-latest
+    name: Typecheck, Test, Build & Cargo Check
+    runs-on: ubuntu-22.04 # matches release.yml; 24.04 dropped libappindicator3-dev
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -32,13 +32,16 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - name: Install Node Dependencies
         run: npm ci
 
       - name: Run Typecheck
         run: npm run typecheck
+
+      - name: Run Tests (unit + stress + fuzz)
+        run: npm test
 
       - name: Build Web Client
         run: npm run build

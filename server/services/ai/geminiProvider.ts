@@ -14,7 +14,19 @@ export function createGeminiProvider(settings: ResolvedAiSettings): AiProvider {
     const modelName = settings.geminiModel;
 
     async function generateText(prompt: string, image?: { data: string; mimeType: string }): Promise<string> {
-        const model = genAI.getGenerativeModel({ model: modelName });
+        // Deterministic, bounded, JSON-typed output for what is a structured
+        // extraction task (defaults are temperature 1 + prose-friendly).
+        const model = genAI.getGenerativeModel(
+            {
+                model: modelName,
+                generationConfig: {
+                    temperature: 0.1,
+                    maxOutputTokens: 4096,
+                    responseMimeType: 'application/json',
+                },
+            },
+            { timeout: 120_000 }
+        );
         const parts: Array<string | { inlineData: { data: string; mimeType: string } }> = [prompt];
         if (image) {
             parts.push({ inlineData: { data: image.data, mimeType: image.mimeType } });
@@ -52,7 +64,7 @@ export function createGeminiProvider(settings: ResolvedAiSettings): AiProvider {
             if (messages.length === 0) {
                 throw new Error('At least one message is required.');
             }
-            const prompt = buildChatPrompt(snapshot, actionContext, messages);
+            const prompt = buildChatPrompt(snapshot, actionContext, messages, { redactPii: true });
             const text = await generateText(prompt);
             return parseChatResponseText(text);
         },

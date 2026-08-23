@@ -185,13 +185,14 @@ class SemanticOrchestrator:
             "context_key": context_key,
         }
         if self.async_cache_write:
-            self._executor.submit(
+            fut = self._executor.submit(
                 self.cache.store,
                 request.query,
                 response_text,
                 emb.vector,
                 store_metadata,
             )
+            fut.add_done_callback(self._log_store_failure)
         else:
             self.cache.store(
                 request.query,
@@ -209,6 +210,15 @@ class SemanticOrchestrator:
             total_latency_ms=(time.perf_counter() - t_total) * 1000,
             diagnostics=diagnostics,
         )
+
+    @staticmethod
+    def _log_store_failure(fut: concurrent.futures.Future) -> None:
+        """Done-callback for async cache stores: surface silent failures."""
+        if fut.cancelled():
+            return
+        exc = fut.exception()
+        if exc is not None:
+            logger.warning("async cache store failed", exc_info=exc)
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False)

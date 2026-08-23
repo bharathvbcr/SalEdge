@@ -25,7 +25,7 @@ type DailyCloseSectionProps = {
 };
 
 export const DailyCloseSection: React.FC<DailyCloseSectionProps> = ({ firmFilter }) => {
-    const { transactions, expenses, dailyCloses, saveDailyClose, reopenDailyClose } = useAppData();
+    const { transactions, expenses, paymentVouchers, dailyCloses, saveDailyClose, reopenDailyClose } = useAppData();
     const { defaultFirm } = useConfig();
     const currency = defaultFirm?.financials.currencySymbol || '₹';
 
@@ -38,14 +38,26 @@ export const DailyCloseSection: React.FC<DailyCloseSectionProps> = ({ firmFilter
     const [showConfirm, setShowConfirm] = useState(false);
 
     const dayBook = useMemo(
-        () => computeDayBook(transactions, expenses, closeDate, firmFilter),
-        [transactions, expenses, closeDate, firmFilter]
+        () => computeDayBook(transactions, expenses, closeDate, firmFilter, paymentVouchers),
+        [transactions, expenses, closeDate, firmFilter, paymentVouchers]
     );
 
     const existingClose = useMemo(
         () => dailyCloses.find(c => c.date === closeDate && (c.firmId || 'all') === (firmFilter === 'all' ? 'all' : firmFilter)),
         [dailyCloses, closeDate, firmFilter]
     );
+
+    // Sub-paise float residue must not read as a shortage.
+    const isSettled = (v: number) => Math.abs(v) <= 0.01;
+
+    const upiCountedForVariance = showConfirm
+        ? (countedUpi ? Number(countedUpi) : dayBook.upiIn)
+        : (existingClose?.countedUpi ?? dayBook.upiIn);
+    const cardCountedForVariance = showConfirm
+        ? (countedCard ? Number(countedCard) : dayBook.cardIn)
+        : (existingClose?.countedCard ?? dayBook.cardIn);
+    const upiVariance = Math.round((upiCountedForVariance - dayBook.upiIn) * 100) / 100;
+    const cardVariance = Math.round((cardCountedForVariance - dayBook.cardIn) * 100) / 100;
 
     const isClosed = Boolean(existingClose);
 
@@ -137,13 +149,15 @@ export const DailyCloseSection: React.FC<DailyCloseSectionProps> = ({ firmFilter
             </div>
 
             <p className="text-xs text-text-muted mb-4">
-                Expected cash = cash received minus cash expenses for the selected day.
+                Expected cash = cash received (sales, udhaar receipts) minus cash expenses, adjusted for bank deposits/withdrawals (Contra).
             </p>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
                 <ReportMetric label="Cash In" value={`${currency}${dayBook.cashIn.toLocaleString('en-IN')}`} colorClass="text-green-600" />
-                <ReportMetric label="UPI In" value={`${currency}${dayBook.upiIn.toLocaleString('en-IN')}`} colorClass="text-blue-600" />
-                <ReportMetric label="Card In" value={`${currency}${dayBook.cardIn.toLocaleString('en-IN')}`} colorClass="text-purple-600" />
+                <ReportMetric label="UPI In" value={`${currency}${dayBook.upiIn.toLocaleString('en-IN')}`} colorClass="text-blue-600"
+                    subvalue={!isSettled(upiVariance) ? `Counted differs by ${currency}${upiVariance.toFixed(2)}` : undefined} />
+                <ReportMetric label="Card In" value={`${currency}${dayBook.cardIn.toLocaleString('en-IN')}`} colorClass="text-purple-600"
+                    subvalue={!isSettled(cardVariance) ? `Counted differs by ${currency}${cardVariance.toFixed(2)}` : undefined} />
                 <ReportMetric label="Cash Expenses" value={`${currency}${dayBook.cashExpenses.toLocaleString('en-IN')}`} colorClass="text-red-500" />
                 <ReportMetric
                     label="Expected Cash"
@@ -160,7 +174,7 @@ export const DailyCloseSection: React.FC<DailyCloseSectionProps> = ({ firmFilter
                     </p>
                     <p className="text-text-secondary mt-1">
                         Variance:{' '}
-                        <span className={existingClose.variance === 0 ? 'text-green-600' : existingClose.variance > 0 ? 'text-blue-600' : 'text-red-600'}>
+                        <span className={isSettled(existingClose.variance) ? 'text-green-600' : existingClose.variance > 0 ? 'text-blue-600' : 'text-red-600'}>
                             {existingClose.variance >= 0 ? '+' : ''}
                             {currency}{existingClose.variance.toLocaleString('en-IN')}
                         </span>
@@ -192,7 +206,7 @@ export const DailyCloseSection: React.FC<DailyCloseSectionProps> = ({ firmFilter
                                         </td>
                                         <td className="p-2 text-right">{currency}{row.expectedCash.toLocaleString('en-IN')}</td>
                                         <td className="p-2 text-right">{currency}{row.countedCash.toLocaleString('en-IN')}</td>
-                                        <td className={`p-2 text-right font-medium ${row.variance === 0 ? 'text-green-600' : row.variance > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                                        <td className={`p-2 text-right font-medium ${Math.abs(row.variance) <= 0.01 ? 'text-green-600' : row.variance > 0 ? 'text-blue-600' : 'text-red-600'}`}>
                                             {row.variance >= 0 ? '+' : ''}{currency}{row.variance.toLocaleString('en-IN')}
                                         </td>
                                         <td className="p-2 text-text-muted truncate max-w-[160px]">{row.notes || '—'}</td>

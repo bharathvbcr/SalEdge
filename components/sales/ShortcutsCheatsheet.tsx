@@ -1,17 +1,27 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { SALES_SHORTCUTS } from '../../utils/shortcuts.ts';
 
 export const ShortcutsCheatsheet: React.FC = () => {
     const [open, setOpen] = useState(false);
 
+    useEffect(() => {
+        if (!open) return;
+        const handleKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setOpen(false);
+        };
+        document.addEventListener('keydown', handleKey);
+        return () => document.removeEventListener('keydown', handleKey);
+    }, [open]);
+
     return (
-        <div className="relative hidden md:block">
+        <div className="relative">
             <button
                 type="button"
                 onClick={() => setOpen(o => !o)}
                 className="btn-icon text-text-muted hover:text-text-primary"
                 title="Keyboard shortcuts"
                 aria-label="Keyboard shortcuts"
+                aria-expanded={open}
             >
                 ?
             </button>

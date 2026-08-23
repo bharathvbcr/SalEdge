@@ -1,6 +1,5 @@
-import { Transaction, Purchase, ProductType } from '../types.ts';
-import { computeHsnSummary } from './reports.ts';
-import { splitTaxAmount } from '../indianGST.ts';
+import { Transaction, Purchase } from '../types.ts';
+import { roundPaise, splitTaxAmount } from '../indianGST.ts';
 
 export type Gstr3bSummary = {
     outwardTaxable: number;
@@ -19,13 +18,12 @@ export type Gstr3bSummary = {
 
 export function computeGstr3b(
     transactions: Transaction[],
-    purchases: Purchase[],
-    productTypes: ProductType[],
-    gstRate: number
+    purchases: Purchase[]
 ): Gstr3bSummary {
-    const sales = transactions.filter(
-        t => (t.status === 'Paid' || t.status === 'Due') && t.type !== 'Return'
-    );
+    // Quotations never become supplies; Returns (credit notes) NET against
+    // outward taxable supplies instead of being dropped entirely — dropping
+    // them overstates the filed liability by the credit-note amount.
+    const billable = transactions.filter(t => t.status === 'Paid' || t.status === 'Due');
 
     let outwardTaxable = 0;
     let outwardTax = 0;
@@ -33,14 +31,20 @@ export function computeGstr3b(
     let outwardSgst = 0;
     let outwardIgst = 0;
 
-    sales.forEach(t => {
+    billable.forEach(t => {
+        const direction = t.type === 'Return' ? -1 : 1;
         const taxable = t.total - t.taxAmount;
-        outwardTaxable += taxable;
-        outwardTax += t.taxAmount;
+        outwardTaxable += direction * taxable;
+        outwardTax += direction * t.taxAmount;
+        // Prefer the reconciled splits stored on the transaction at save time;
+        // fall back to paise-exact derivation for legacy records.
         if (t.isInterstate) {
-            outwardIgst += t.taxAmount;
+            outwardIgst += direction * (t.totalIgst ?? t.taxAmount);
+        } else if (t.totalCgst != null && t.totalSgst != null) {
+            outwardCgst += direction * t.totalCgst;
+            outwardSgst += direction * t.totalSgst;
         } else {
-            const split = splitTaxAmount(t.taxAmount, false);
+            const split = splitTaxAmount(direction * t.taxAmount, false);
             outwardCgst += split.cgst;
             outwardSgst += split.sgst;
         }
@@ -53,31 +57,35 @@ export function computeGstr3b(
     let itcIgst = 0;
 
     receivedPurchases.forEach(p => {
-        const rate = gstRate / 100;
-        const taxable = p.totalAmount / (1 + rate);
-        const tax = p.totalAmount - taxable;
-        inputTaxCredit += tax;
-        itcCgst += splitTaxAmount(tax, false).cgst;
-        itcSgst += splitTaxAmount(tax, false).sgst;
+        // Use the per-item tax captured at purchase entry (each item carries
+        // its own HSN rate) instead of back-calculating every bill at one
+        // global rate.
+        p.items.forEach(item => {
+            const tax = item.taxAmount ?? 0;
+            inputTaxCredit += tax;
+            const split = splitTaxAmount(tax, false);
+            itcCgst += split.cgst;
+            itcSgst += split.sgst;
+        });
     });
 
-    const hsn = computeHsnSummary(sales, productTypes, gstRate);
-    const exemptSupplies = 0;
-    const nilRatedSupplies = 0;
+    // True net position: negative means excess ITC carried forward, which
+    // Math.max(0, …) previously masked as a zero payable.
+    const netTaxPayable = roundPaise(outwardTax - inputTaxCredit);
 
     return {
-        outwardTaxable,
-        outwardTax,
-        outwardCgst,
-        outwardSgst,
-        outwardIgst,
-        inputTaxCredit,
-        itcCgst,
-        itcSgst,
-        itcIgst,
-        netTaxPayable: Math.max(0, outwardTax - inputTaxCredit),
-        exemptSupplies,
-        nilRatedSupplies,
+        outwardTaxable: roundPaise(outwardTaxable),
+        outwardTax: roundPaise(outwardTax),
+        outwardCgst: roundPaise(outwardCgst),
+        outwardSgst: roundPaise(outwardSgst),
+        outwardIgst: roundPaise(outwardIgst),
+        inputTaxCredit: roundPaise(inputTaxCredit),
+        itcCgst: roundPaise(itcCgst),
+        itcSgst: roundPaise(itcSgst),
+        itcIgst: roundPaise(itcIgst),
+        netTaxPayable,
+        exemptSupplies: 0,
+        nilRatedSupplies: 0,
     };
 }
 

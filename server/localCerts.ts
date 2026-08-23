@@ -3,7 +3,12 @@ import path from 'path';
 import selfsigned from 'selfsigned';
 import { getLanAddresses } from './networkInfo.js';
 
-const CERT_DIR = path.resolve(process.cwd(), '.certs');
+// Desktop bundles redirect all writable state out of the (signed, read-only)
+// .app bundle via BSMS_DATA_DIR; plain deployments keep repo-root defaults.
+const DATA_ROOT = process.env.BSMS_DATA_DIR
+    ? path.resolve(process.env.BSMS_DATA_DIR)
+    : path.resolve(process.cwd());
+const CERT_DIR = path.join(DATA_ROOT, '.certs');
 
 export interface LocalCertMaterial {
     key: string;
@@ -28,7 +33,7 @@ export async function ensureLocalCerts(): Promise<LocalCertMaterial | null> {
         notAfterDate.setFullYear(notAfterDate.getFullYear() + 2);
 
         const pems = await selfsigned.generate(
-            [{ name: 'commonName', value: 'Battery Shop Local' }],
+            [{ name: 'commonName', value: 'SalEdge Local' }],
             {
                 keySize: 2048,
                 algorithm: 'sha256',
@@ -37,9 +42,15 @@ export async function ensureLocalCerts(): Promise<LocalCertMaterial | null> {
                 extensions: [{ name: 'subjectAltName', altNames }],
             },
         );
-        fs.writeFileSync(keyPath, pems.private, 'utf8');
         fs.writeFileSync(certPath, pems.cert, 'utf8');
-        console.log('[certs] Generated local HTTPS certificate in .certs/');
+        fs.writeFileSync(keyPath, pems.private, 'utf8');
+        // A TLS private key must never be group/world-readable.
+        try {
+            fs.chmodSync(CERT_DIR, 0o700);
+            fs.chmodSync(certPath, 0o600);
+            fs.chmodSync(keyPath, 0o600);
+        } catch { /* best effort on filesystems without POSIX perms */ }
+        console.log('[certs] Generated local HTTPS certificate in', CERT_DIR);
     }
 
     return {

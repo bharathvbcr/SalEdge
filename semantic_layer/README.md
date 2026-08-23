@@ -6,8 +6,8 @@ Targets **<15 ms p95** semantic-layer overhead on consumer hardware (excluding L
 
 ## Features
 
-- **Semantic cache** — FAISS `IndexFlatIP` with cosine similarity, TTL, LRU eviction, and adaptive threshold tuning (`threshold.py`)
-- **Semantic router** — Complexity scoring routes queries to small/medium/large model tiers
+- **Semantic cache** — FAISS `IndexFlatIP` (default) with optional ChromaDB backend, cosine similarity, TTL, LRU eviction, context-scoped hits, and adaptive threshold tuning (`threshold.py`)
+- **Semantic router** — Complexity scoring routes queries to small/medium/large model tiers (models auto-discovered from Ollama or pinned via `SEMANTIC_TIER_*_MODEL`)
 - **Semantic compressor** — Filters irrelevant RAG chunks before LLM context window
 - **Backends** — Ollama, llama.cpp server, Hugging Face Transformers
 - **Metrics** — Prometheus-style counters, gauges, and latency histograms
@@ -95,9 +95,12 @@ All settings use the `SEMANTIC_` environment prefix (see `config.py`):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SEMANTIC_EMBEDDER_DEVICE` | `cpu` | Embedder device (`cpu`, `cuda`, `mps`) |
+| `SEMANTIC_EMBEDDER_BATCH_SIZE` | `32` | Batch size for RAG chunk embedding |
 | `SEMANTIC_SIMILARITY_THRESHOLD` | `0.88` | Initial cache similarity threshold |
 | `SEMANTIC_INFERENCE_BACKEND` | `ollama` | `ollama`, `llamacpp`, or `huggingface` |
 | `SEMANTIC_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
+| `SEMANTIC_VECTOR_BACKEND` | `faiss` | Cache index backend: `faiss` or `chroma` (Chroma falls back to FAISS if not installed) |
+| `SEMANTIC_TIER_SMALL_MODEL` / `_MEDIUM_` / `_LARGE_` | *(auto)* | Pin per-tier models; empty/`auto` discovers from installed Ollama models at startup |
 | `SEMANTIC_CACHE_DIR` | `./data/semantic_cache` | Persistent cache directory |
 | `SEMANTIC_ASYNC_CACHE_WRITE` | `true` | Non-blocking cache writes |
 
@@ -126,17 +129,19 @@ Minimal standalone demo: `python semantic_layer/examples/minimal_pipeline.py`
 
 ```
 semantic_layer/
-├── config.py          # Pydantic settings
-├── embedder.py        # Sentence-transformers wrapper
-├── threshold.py       # Adaptive cosine threshold tuner
-├── cache.py           # FAISS cache + TTL/LRU
-├── router.py          # Complexity-based routing
-├── compressor.py      # RAG chunk filtering
-├── orchestrator.py    # Pipeline coordinator (FastAPI)
-├── benchmark.py       # Component latency benchmarks
-├── metrics.py         # Prometheus helpers
-├── main.py            # FastAPI entrypoint
-└── backends/          # Ollama, llama.cpp, HuggingFace
+├── config.py            # Pydantic settings
+├── embedder.py          # Sentence-transformers wrapper
+├── threshold.py         # Adaptive cosine threshold tuner
+├── cache.py             # FAISS cache + TTL/LRU (optional ChromaDB backend)
+├── router.py            # Complexity-based routing
+├── compressor.py        # RAG chunk filtering
+├── orchestrator.py      # Pipeline coordinator (FastAPI)
+├── benchmark.py         # Component latency benchmarks
+├── metrics.py           # Prometheus helpers
+├── ollama_discovery.py  # Tier-model discovery from Ollama /api/tags
+├── main.py              # FastAPI entrypoint
+├── examples/            # Minimal standalone demo
+└── backends/            # Ollama, llama.cpp, HuggingFace
 ```
 
 ## Integration with Battery Shop App
@@ -154,4 +159,4 @@ When **Ollama** is selected as the AI provider, the semantic layer starts **auto
 
 Chat and insights use semantic caching/routing transparently. Invoice OCR uses Ollama vision directly. If the semantic layer is unavailable, requests fall back to direct Ollama with no user action required.
 
-Configure `SEMANTIC_LAYER_URL` or set `SEMANTIC_LAYER_AUTO_START=false` in `.env` to disable auto-start.
+Configure `SEMANTIC_LAYER_URL` (default `auto`: bind a free local port instead of 8090) or set `SEMANTIC_LAYER_AUTO_START=false` in `.env` to disable auto-start.

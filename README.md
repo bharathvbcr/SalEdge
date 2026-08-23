@@ -2,7 +2,7 @@
   <img src="public/logo.svg" alt="SalEdge" width="88" height="88" />
 </p>
 
-# Battery Shop Management System (BSMS)
+# SalEdge
 
 A production-grade, multi-user ERP and shop management system custom-built for modern battery retailers. It combines multi-firm billing, strict Indian GST compliance, native desktop packaging via Tauri, a secure QR-paired Mobile Companion, and an advanced local AI Semantic Layer powered by Ollama/Gemini.
 
@@ -42,14 +42,16 @@ A production-grade, multi-user ERP and shop management system custom-built for m
 
 ### Indian GST Compliance
 * **GSTR-1 Ready Exports:** Automatically compile and export GSTR-1 reports, partitioned into standard **B2B**, **B2CS**, and **HSN-wise summary** CSV formats for easy filing.
-* **GSTR-3B Computation:** Generate periodic summaries auto-calculating total liability, claimable Input Tax Credit (ITC), and net payable taxes across CGST, SGST, and IGST.
+* **GSTR-3B Computation:** Generate periodic summaries auto-calculating total liability, claimable Input Tax Credit (ITC), and net payable taxes across CGST, SGST, and IGST. ITC uses the per-item tax captured on each purchase bill instead of a single back-calculated rate.
+* **Per-Line HSN Rates:** Cart lines carry their own statutory rate from the product's HSN code (lead-acid 28%, lithium 18%, solar 12%…), so mixed-rate invoices are taxed correctly per bucket; overall discounts are allocated pro-rata.
+* **Paise-Exact Reconciliation:** CGST/SGST halves always sum exactly to the filed tax total (SGST carries the odd paisa).
 * **Automatic Tax Splitting:** Intelligently splits taxes (CGST + SGST vs. IGST) based on the billing state (Place of Supply) and buyer state code.
 * **Tax Regime Support:** Toggle between **Regular** (full tax breakdown) and **Composition** (consolidated tax) schemes.
 
 ### E-Invoice & E-Way Bill Integration
-* **E-Invoice (IRN) Generation:** Automatically generates Invoice Reference Numbers (IRN), QR codes, and digital signatures for B2B transactions.
+* **Explicit Modes:** **Sandbox/Mock** generation produces clearly-marked `MockGenerated` documents (never filed); **Live** mode files real IRNs through your GSP and fails loudly on any error — a failed GSP call never silently degrades to fabricated legal documents.
+* **Turnover-Based Applicability:** E-invoicing applies to B2B invoices when the firm's aggregate turnover crosses the statutory mandate (configured in Settings), not per-invoice value.
 * **E-Way Bill Integration:** Triggers e-way bill generation for consignments exceeding GST statutory limits (e.g., ₹50,000 threshold) or interstate transport.
-* **Live & Sandbox Modes:** Toggle between built-in mock/offline sandboxes and production APIs via GSP integration credentials.
 * **Status Auditing:** Full capability to cancel generated E-Invoices or E-Way bills directly from the transaction log, with audit trails.
 
 ### AI Business Assistant & Insights
@@ -94,9 +96,13 @@ A production-grade, multi-user ERP and shop management system custom-built for m
 
 ### Security, Roles & Multi-User Concurrency
 * **Role-Based Access Control:** Separate accounts for **Admins** (user management, billing configuration, database actions) and **Staff** (sales, services, inventory entries).
+* **Forced Password Rotation:** Seeded and admin-assigned passwords must be changed on first login before the app can be used.
+* **Hardened Auth:** Passwords hashed with scrypt (legacy bcrypt hashes upgrade transparently on login), login/register endpoints rate-limited, CORS pinned to localhost + `ALLOWED_ORIGINS`, strict security headers (CSP, nosniff, DENY framing).
+* **Server-Side Secrets:** Gemini and GSP API keys are stored server-side (`data/` SQLite `_secrets` store, admin-only) and never shipped to browsers; live e-invoicing is proxied through the app's own server.
 * **Session Guard:** Automatic logout and lock-screen engagement after 30 minutes of inactivity.
-* **Optimistic Concurrency Control:** Multi-user conflict resolution. The API rejects stale updates with a 409 status code, prompting staff to merge/refresh data before overwriting.
-* **Audit Trails:** Immutable logging of critical operations (deletions, updates, stock reversals, and e-invoicing actions) with structural JSON data snapshots.
+* **Optimistic Concurrency Control:** Every write carries the collection version it was read at; the API rejects stale or version-less overwrites with a `409` status code, prompting staff to refresh before saving.
+* **Immutable Audit Trails:** Deletions, imports/resets, backups and e-invoice actions are written to a server-side **append-only** audit table enforced by database triggers (UPDATE/DELETE are aborted). The trail survives app resets.
+* **Backups:** On-demand server-side SQLite backups (Settings ➔ Data & Backups, newest 10 kept in `data/backups/`), an automatic snapshot before every import/reset, and a final backup on production shutdown.
 
 ---
 
@@ -107,7 +113,7 @@ A production-grade, multi-user ERP and shop management system custom-built for m
 │                   Mobile Companion                     │
 │   (Phone Browser / Camera / Barcode & OCR Uploads)      │
 └──────────────────────────┬─────────────────────────────┘
-                           │ WebSocket / HTTPS (local)
+                           │ HTTPS (local, QR-paired)
                            ▼
 ┌────────────────────────────────────────────────────────┐
 │                   Vite/React UI                        │
@@ -117,7 +123,8 @@ A production-grade, multi-user ERP and shop management system custom-built for m
                            ▼
 ┌────────────────────────────────────────────────────────┐
 │                   Express API Server                   │
-│   (JWT Auth, GST Engine, E-Invoice, Voucher Ledger)    │
+│ (JWT Auth + Rate Limiting, GST Engine, E-Invoice GSP   │
+│  Proxy, Append-Only Audit Log, SQLite Backups)         │
 └────────────────────┬───────────────┬───────────────────┘
                      │               │
      SQLite DB       │               │ HTTP (port 8090)
@@ -237,12 +244,24 @@ Configure application parameters using a `.env` file in the root directory:
 | :--- | :--- | :--- |
 | `PORT` | `auto` | Express API port. If `auto`, it will bind to the first free port starting from 3001. |
 | `DATABASE_PATH` | `data/bsms.sqlite` | Absolute or relative path to the SQLite DB file. |
-| `JWT_SECRET` | *(Developer default)* | JWT signing key. **Must change** to a random string in production. |
+| `JWT_SECRET` | *(dev fallback)* | JWT signing key. **Required in production — the server refuses to boot without it.** Generate with `openssl rand -hex 32`. |
+| `ALLOWED_ORIGINS` | *(localhost only)* | Comma-separated extra origins accepted by CORS (e.g., a LAN dev front-end). |
 | `ALLOW_REGISTRATION` | `false` | Enables self-registration UI on the lock screen. |
 | `SEMANTIC_LAYER_ENABLED` | `true` | Route assistant questions through the Python Semantic Layer. |
 | `SEMANTIC_LAYER_AUTO_START`| `true` | Starts the semantic layer server automatically during main app startup. |
-| `SEMANTIC_LAYER_URL` | `http://127.0.0.1:8090` | Endpoint for the semantic layer API. |
+| `SEMANTIC_LAYER_URL` | `auto` | Endpoint for the semantic layer API. If `auto` or unset, the launcher binds a free local port instead of the default 8090. |
+| `SEMANTIC_VECTOR_BACKEND` | `faiss` | Semantic-cache vector index: `faiss` or `chroma` (falls back to FAISS if ChromaDB isn't installed). |
+| `SEMANTIC_TIER_SMALL_MODEL` / `_MEDIUM_` / `_LARGE_` | *(auto-discovered)* | Pin per-tier Ollama models for the semantic router. Empty/`auto` discovers small/median/largest completion models from installed Ollama models at startup; if discovery fails, tiers stay unassigned and requests fail at inference until configured or Ollama becomes reachable. |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434`| Target Ollama instance for direct requests (fallback & OCR). |
+
+---
+
+## Tests
+
+```bash
+npm test        # node:test suite: GST math, auth/hashing, rate limiter, DB concurrency + audit triggers, e-invoice integrity
+```
+The database tests run against an isolated temp SQLite file and never touch `data/`.
 
 ---
 

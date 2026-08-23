@@ -14,8 +14,10 @@ import { ToastContainer } from './components/Toast.tsx';
 import { AuthProvider, useAuth } from './context/AuthContext.tsx';
 import { NotificationProvider } from './context/NotificationContext.tsx';
 import { LockScreen } from './components/LockScreen.tsx';
+import { ForcePasswordChange } from './components/ForcePasswordChange.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
-import { setStorageConflictHandler } from './hooks/useApiStorage.tsx';
+import { setStorageConflictHandler, setStorageSaveHandlers, setStorageHydrationHandler } from './hooks/useApiStorage.tsx';
+import { HydrationWarningBanner } from './components/HydrationWarningBanner.tsx';
 import { AppHeader } from './components/AppHeader.tsx';
 import { LoadingScreen, PageLoadingFallback } from './components/LoadingSpinner.tsx';
 import { getDefaultPage, isPageAllowed } from './utils/roleAccess.ts';
@@ -61,6 +63,13 @@ const MainLayout: React.FC = () => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
                 setQuickNavOpen(true);
+            } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                const target = e.target as HTMLElement | null;
+                const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+                if (!isTyping) {
+                    e.preventDefault();
+                    setQuickNavOpen(prev => !prev);
+                }
             }
         };
         window.addEventListener('keydown', handleKeyDown);
@@ -152,11 +161,17 @@ const MainLayout: React.FC = () => {
 };
 
 const AuthenticatedApp: React.FC = () => {
-    const { isAuthenticated, isLoading } = useAuth();
+    const { user, isAuthenticated, isLoading } = useAuth();
+    const [hydrationFailed, setHydrationFailed] = useState(false);
 
     useEffect(() => {
         const page = getRequestedPage();
         if (page) stashMobileRedirect(page);
+    }, []);
+
+    useEffect(() => {
+        setStorageHydrationHandler(setHydrationFailed);
+        return () => setStorageHydrationHandler(null);
     }, []);
 
     if (isLoading) {
@@ -167,6 +182,11 @@ const AuthenticatedApp: React.FC = () => {
         return <LockScreen />;
     }
 
+    // Seeded / admin-reset accounts must rotate their known password first.
+    if (user?.mustChangePassword) {
+        return <ForcePasswordChange />;
+    }
+
     return (
         <ConfigProvider>
             <ToastProvider>
@@ -174,6 +194,7 @@ const AuthenticatedApp: React.FC = () => {
                     <MasterDataProvider>
                         <AppDataProvider>
                             <DataLoadingGate>
+                                {hydrationFailed && <HydrationWarningBanner />}
                                 <NotificationProvider>
                                     <SessionTimeoutWarning />
                                     <MainLayout />
@@ -191,7 +212,14 @@ const StorageConflictBridge: React.FC<{ children: ReactNode }> = ({ children }) 
     const { addToast } = useToast();
     useEffect(() => {
         setStorageConflictHandler(msg => addToast(msg, 'warning'));
-        return () => setStorageConflictHandler(null);
+        setStorageSaveHandlers({
+            onError: msg => addToast(msg, 'error'),
+            onRecovered: () => addToast('Connection restored — all changes saved.', 'success'),
+        });
+        return () => {
+            setStorageConflictHandler(null);
+            setStorageSaveHandlers({ onError: null, onRecovered: null });
+        };
     }, [addToast]);
     return <>{children}</>;
 };
