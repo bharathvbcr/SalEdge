@@ -93,7 +93,11 @@ dump/
 Thumbs.db
 .AppleDouble
 .LSOverride
-Icon?
+# macOS custom-folder icon file: literally "Icon" + CR, written here as two
+# CRs because git strips one trailing CR per line. Do not simplify this to
+# "Icon?" -- that also matches any 5-character name (e.g. public/icons/)
+# when core.ignorecase is on, which silently untracked the PWA icon set.
+Icon
 .vscode/*
 !.vscode/extensions.json
 .idea/

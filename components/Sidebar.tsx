@@ -6,6 +6,7 @@ import { useNotifications } from '../context/NotificationContext.tsx';
 import { useAppData } from '../context/AppDataContext.tsx';
 import { useMasterData } from '../context/MasterDataContext.tsx';
 import { isPageAllowed } from '../utils/roleAccess.ts';
+import { BrandMark } from './BrandMark.tsx';
 
 interface NavLinkProps {
   icon: React.ReactElement<{ className?: string }>;
@@ -120,10 +121,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isSidebarOpen, setSidebarOpen,
         <div className="flex items-center justify-between pb-4 border-b border-border-color">
           <div className="flex items-center space-x-2">
             <div className="flex-shrink-0">
-              <img src="/logo.svg" alt="Battery Shop Logo" className="h-9 w-9 object-contain filter drop-shadow-[0_2px_6px_rgba(6,182,212,0.2)]" />
+              <BrandMark className="h-9 w-9" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-text-primary leading-tight">Battery Shop</h1>
+              <h1 className="text-lg font-bold text-text-primary leading-tight">SalEdge</h1>
               <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${userRole === 'admin' ? 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800' : 'bg-bg-tertiary text-text-muted border-border-color'}`}>
                 {user?.displayName || userRole}
               </span>

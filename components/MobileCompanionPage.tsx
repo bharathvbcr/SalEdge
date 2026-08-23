@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { BrandMark } from './BrandMark.tsx';
 import { Page, InventoryItem, ProductType, WarrantyLog } from '../types.ts';
 import { useAppData } from '../context/AppDataContext.tsx';
 import { useMasterData } from '../context/MasterDataContext.tsx';
@@ -1003,6 +1004,7 @@ export const MobileCompanionPage: React.FC<MobileCompanionPageProps> = ({ onNavi
                 <div className="flex items-center justify-between mb-3">
                     <div>
                         <div className="flex items-center gap-2">
+                            <BrandMark className="h-6 w-6" />
                             <h1 className="text-lg font-bold text-text-primary">Mobile Companion</h1>
                             <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`} title={isOnline ? 'Online' : 'Offline'} />
                         </div>

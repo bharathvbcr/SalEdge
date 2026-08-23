@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.svg" alt="SalEdge" width="88" height="88" />
+</p>
+
 # Battery Shop Management System (BSMS)
 
 A production-grade, multi-user ERP and shop management system custom-built for modern battery retailers. It combines multi-firm billing, strict Indian GST compliance, native desktop packaging via Tauri, a secure QR-paired Mobile Companion, and an advanced local AI Semantic Layer powered by Ollama/Gemini.

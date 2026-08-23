@@ -1,4 +1,5 @@
 import React from 'react';
+import { BrandMark } from './BrandMark.tsx';
 
 interface LoadingSpinnerProps {
     message?: string;
@@ -24,12 +25,7 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ message, size = 
 
 export const LoadingScreen: React.FC<{ message?: string }> = ({ message = 'Loading...' }) => (
     <div className="flex h-screen flex-col items-center justify-center bg-bg-primary gap-6">
-        <div className="p-3 bg-brand-red rounded-xl shadow-lg shadow-brand-red/20">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 01-2-2V4z" />
-                <path fillRule="evenodd" d="M2 9a2 2 0 012-2h12a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V9zm4 4a1 1 0 011-1h2a1 1 0 110 2H7a1 1 0 01-1-1zm6 0a1 1 0 100-2h2a1 1 0 100 2h-2z" clipRule="evenodd" />
-            </svg>
-        </div>
+        <BrandMark className="h-16 w-16" alt="SalEdge" glow="lg" />
         <LoadingSpinner message={message} size="lg" />
     </div>
 );

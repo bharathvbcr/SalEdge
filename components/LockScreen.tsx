@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { TEST_LOGIN_ENABLED, TEST_ACCOUNTS, TestAccount } from '../utils/testLogin.ts';
 import { isMobileCompanionContext, stashMobileRedirect } from '../utils/mobileConnect.ts';
+import { BrandMark } from './BrandMark.tsx';
 
 export const LockScreen: React.FC = () => {
     const { login, register, allowRegistration } = useAuth();
@@ -60,10 +61,10 @@ export const LockScreen: React.FC = () => {
 
             <div className="relative bg-bg-secondary p-8 rounded-2xl shadow-2xl w-full max-w-md border border-border-color animate-slide-up">
                 <div className="flex justify-center mb-6">
-                    <img src="/logo.svg" alt="Battery Shop Logo" className="h-20 w-20 object-contain filter drop-shadow-[0_4px_10px_rgba(6,182,212,0.25)] dark:drop-shadow-[0_4px_16px_rgba(6,182,212,0.4)]" />
+                    <BrandMark className="h-20 w-20" alt="SalEdge" glow="lg" />
                 </div>
                 <h1 className="text-2xl font-bold text-text-primary mb-1 text-center tracking-tight">
-                    {mobileConnect ? 'Mobile Companion' : 'Battery Shop'}
+                    {mobileConnect ? 'Mobile Companion' : 'SalEdge'}
                 </h1>
                 <p className="text-text-muted mb-8 text-center text-sm">
                     {mobileConnect

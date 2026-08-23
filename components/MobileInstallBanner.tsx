@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BrandMark } from './BrandMark.tsx';
 
 interface BeforeInstallPromptEvent extends Event {
     prompt: () => Promise<void>;
@@ -39,7 +40,7 @@ export const MobileInstallBanner: React.FC = () => {
 
     return (
         <div className="bg-brand-red/10 border border-brand-red/30 rounded-xl p-3 flex items-center gap-3">
-            <span className="text-2xl">📲</span>
+            <BrandMark className="h-9 w-9" />
             <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-text-primary">Install Shop App</p>
                 <p className="text-xs text-text-muted">Add to home screen for faster scanning</p>

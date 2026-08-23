@@ -12,6 +12,7 @@
     "semantic:setup": "node scripts/semantic-setup.mjs",
     "semantic:serve": "node scripts/semantic-serve.mjs",
     "semantic:benchmark": "node scripts/semantic-benchmark.mjs",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "build": "vite build",
     "build:test": "VITE_ENABLE_TEST_LOGIN=true vite build",
     "build:server": "esbuild server/index.ts --bundle --platform=node --packages=external --format=esm --outfile=dist-server/index.mjs",

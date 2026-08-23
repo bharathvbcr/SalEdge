@@ -1,5 +1,5 @@
 const CACHE = 'bsms-shell-v1';
-const SHELL = ['/', '/index.html', '/manifest.json', '/icon.svg'];
+const SHELL = ['/', '/index.html', '/manifest.json', '/logo.svg', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
     event.waitUntil(
