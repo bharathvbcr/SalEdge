@@ -132,3 +132,6 @@ CLAUDE.md
 .warp/
 .gitnexus
 .grok/
+
+# Tauri externalBin sidecars (fetched per-platform by scripts/fetch-node-sidecar.mjs)
+src-tauri/binaries/

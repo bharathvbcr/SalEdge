@@ -11,8 +11,22 @@ const PREFERRED_API_PORT: u16 = 13001;
 struct ServerProcess(Mutex<Option<Child>>);
 
 fn node_executable() -> PathBuf {
+    // Explicit escape hatch for support/debugging.
     if let Ok(path) = std::env::var("BSMS_NODE_PATH") {
         return PathBuf::from(path);
+    }
+
+    // Bundled sidecar (tauri externalBin) ships next to the main executable;
+    // its ABI always matches the better-sqlite3 binding we compiled, unlike
+    // whatever Node major the user happens to have installed. Named
+    // saledge-node so a deb install can never shadow a system `node`.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sidecar = dir.join(if cfg!(windows) { "saledge-node.exe" } else { "saledge-node" });
+            if sidecar.is_file() {
+                return sidecar;
+            }
+        }
     }
 
     for candidate in [
@@ -200,7 +214,6 @@ fn spawn_api_server(handle: &tauri::AppHandle, port: u16) -> Result<Child, Strin
         cmd.arg(server_entry);
         cmd
     };
-
     // The window shell speaks PLAIN HTTP on loopback — the embedded server
     // must not switch to its LAN-HTTPS mode (self-signed cert) or the health
     // probe below can never succeed. All writable state (DB, backups, certs)
@@ -210,6 +223,9 @@ fn spawn_api_server(handle: &tauri::AppHandle, port: u16) -> Result<Child, Strin
         .env("PATH", augmented_path())
         .env("PORT", port.to_string())
         .env("BSMS_HTTPS", "false")
+        // Lets the server provision & persist its own JWT secret in the
+        // app-data dir; without this it (correctly) refuses to start.
+        .env("BSMS_DESKTOP_MANAGED", "true")
         .env("BSMS_DATA_DIR", data_dir.to_string_lossy().into_owned())
         .env(
             "DATABASE_PATH",

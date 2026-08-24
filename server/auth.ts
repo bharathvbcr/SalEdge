@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import fs from 'fs';
 import { getUserByUsername, getUserById, createUser, countUsers, DbUser, updateUserPassword, clearMustChangePasswordFlag } from './db.js';
 import { hashPassword, verifyPasswordValue, isLegacyBcryptHash } from './passwords.js';
 
@@ -7,9 +9,38 @@ const DEFAULT_DEV_SECRET = 'bsms-dev-secret-change-in-production';
 const JWT_EXPIRES_IN = '7d';
 const ALLOW_REGISTRATION = process.env.ALLOW_REGISTRATION === 'true';
 
+/**
+ * Desktop-managed provisioning: the packaged shell opts in via
+ * BSMS_DESKTOP_MANAGED=true and points BSMS_DATA_DIR at the user's app-data
+ * directory. On first launch we mint a 256-bit random secret and persist it
+ * user-read-only; later launches reuse it so sessions survive restarts.
+ * Every other context still refuses to start without an explicit secret.
+ */
+function provisionDesktopJwtSecret(): string {
+    const dataDir = process.env.BSMS_DATA_DIR?.trim();
+    if (!dataDir) {
+        throw new Error(
+            'Refusing to start: BSMS_DESKTOP_MANAGED=true requires BSMS_DATA_DIR to provision a JWT secret.'
+        );
+    }
+    const secretFile = `${dataDir}/jwt.secret`;
+    try {
+        const existing = fs.readFileSync(secretFile, 'utf8').trim();
+        if (existing.length >= 32) return existing;
+    } catch { /* first launch */ }
+
+    const secret = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(secretFile, `${secret}\n`, { encoding: 'utf8', mode: 0o600 });
+    console.log('[auth] Provisioned per-installation JWT secret.');
+    return secret;
+}
+
 function resolveJwtSecret(): string {
     const secret = process.env.JWT_SECRET?.trim();
     if (!secret || secret === DEFAULT_DEV_SECRET) {
+        if (process.env.BSMS_DESKTOP_MANAGED === 'true') {
+            return provisionDesktopJwtSecret();
+        }
         if (process.env.NODE_ENV === 'production' || process.env.BSMS_DEV !== 'true') {
             throw new Error(
                 'Refusing to start: JWT_SECRET is not set to a secure value. '

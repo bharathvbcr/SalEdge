@@ -89,6 +89,12 @@ jobs:
       - name: Rebuild Native Modules
         run: npm rebuild better-sqlite3
 
+      # Bundle a pinned Node 22 runtime as a sidecar so end users don't need
+      # Node installed AND the sqlite binding ABI always matches the runtime.
+      # Major version MUST stay in lockstep with actions/setup-node above.
+      - name: Download Node Sidecar
+        run: node scripts/fetch-node-sidecar.mjs ${{ matrix.target }}
+
       - name: Build Web Client & Server
         run: npm run build:desktop
 
