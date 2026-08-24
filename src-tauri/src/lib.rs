@@ -376,7 +376,6 @@ pub fn run() {
                     let _ = window.set_focus();
                 }
             }
-            }
             _ => {}
         }
     });
