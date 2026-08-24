@@ -363,8 +363,19 @@ pub fn run() {
 
     let handle = app.handle().clone();
     app.run(move |_app_handle, event| {
-        if let RunEvent::Exit = event {
-            stop_api_server(&handle);
+        match event {
+            RunEvent::Exit => stop_api_server(&handle),
+            // macOS dock-click / `open -a` while already running: the main
+            // window starts life hidden and is only shown after the API
+            // server is healthy, so a reopen event that arrives before (or
+            // instead of) that first show left users staring at nothing.
+            RunEvent::Reopen { .. } => {
+                if let Some(window) = _app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            _ => {}
         }
     });
 }
