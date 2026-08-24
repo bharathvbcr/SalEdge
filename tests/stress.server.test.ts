@@ -24,8 +24,11 @@ import path from 'path';
 // Unique per-run scratch dir under the OS temp root. A hardcoded absolute
 // macOS path here made CI fail on Linux runners with EACCES.
 const TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'saledge-stress-'));
+const SERVER_LOG = `${TMP_ROOT}/server.log`;
 
 let child: ReturnType<typeof spawn> | null = null;
+let spawnError: Error | null = null;
+let serverLogFd: number | null = null;
 let adminToken = '';
 
 function req(path: string, options: RequestInit & { rawBody?: string } = {}): Promise<Response> {
@@ -44,6 +47,12 @@ function req(path: string, options: RequestInit & { rawBody?: string } = {}): Pr
 async function waitForHealth(timeoutMs = 20_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+        if (spawnError) throw spawnError;
+        if (child && child.exitCode !== null) {
+            throw new Error(
+                `Server exited (code ${child.exitCode}) before becoming healthy — see ${SERVER_LOG}`
+            );
+        }
         try {
             const res = await fetch(`${BASE}/api/health`);
             if (res.ok) return;
@@ -54,7 +63,13 @@ async function waitForHealth(timeoutMs = 20_000): Promise<void> {
 }
 
 before(async () => {
-    // Fresh bundle is built by npm run build:server before tests.
+    // Fresh bundle is built by npm run build:server before tests. Fail fast
+    // with the real cause instead of a 20s timeout when it is missing.
+    if (!fs.existsSync('dist-server/index.mjs')) {
+        throw new Error('dist-server/index.mjs not found — run `npm run build:server` before tests');
+    }
+    const logFd = fs.openSync(SERVER_LOG, 'a');
+    serverLogFd = logFd;
     child = spawn(process.execPath, ['dist-server/index.mjs'], {
         cwd: process.cwd(),
         env: {
@@ -66,8 +81,9 @@ before(async () => {
             BSMS_DEV: 'true',
             SEMANTIC_LAYER_AUTO_START: 'false',
         },
-        stdio: 'ignore',
+        stdio: ['ignore', logFd, logFd],
     });
+    child.on('error', err => { spawnError = err; });
 
     await waitForHealth();
 
@@ -81,13 +97,22 @@ before(async () => {
 });
 
 after(async () => {
-    if (!child) return;
-    await new Promise<void>(resolve => {
-        child!.once('exit', resolve);
-        child!.kill('SIGTERM');
-        setTimeout(() => { try { child!.kill('SIGKILL'); } catch { /* gone */ } resolve(); }, 5000);
-    });
-    try { fs.rmSync(TMP_ROOT, { recursive: true, force: true }); } catch { /* best effort */ }
+    if (child) {
+        await new Promise<void>(resolve => {
+            child!.once('exit', resolve);
+            child!.kill('SIGTERM');
+            setTimeout(() => { try { child!.kill('SIGKILL'); } catch { /* gone */ } resolve(); }, 5000);
+        });
+    }
+    if (serverLogFd !== null) {
+        try { fs.closeSync(serverLogFd); } catch { /* already closed */ }
+    }
+    try {
+        for (const entry of fs.readdirSync(TMP_ROOT)) {
+            if (entry === 'server.log') continue; // keep for failure diagnosis
+            fs.rmSync(`${TMP_ROOT}/${entry}`, { recursive: true, force: true });
+        }
+    } catch { /* best effort */ }
 });
 
 describe('stress: auth surface', () => {

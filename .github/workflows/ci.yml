@@ -40,14 +40,16 @@ jobs:
       - name: Run Typecheck
         run: npm run typecheck
 
-      - name: Run Tests (unit + stress + fuzz)
-        run: npm test
-
+      # Build BEFORE tests: the stress suite boots the real server from
+      # dist-server/index.mjs, which does not exist on a fresh checkout.
       - name: Build Web Client
         run: npm run build
 
       - name: Build Server Bundle
         run: npm run build:server
+
+      - name: Run Tests (unit + stress + fuzz)
+        run: npm test
 
       - name: Cargo Check
         run: cargo check --manifest-path src-tauri/Cargo.toml
