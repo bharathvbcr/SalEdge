@@ -369,11 +369,13 @@ pub fn run() {
             // window starts life hidden and is only shown after the API
             // server is healthy, so a reopen event that arrives before (or
             // instead of) that first show left users staring at nothing.
+            #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {
                 if let Some(window) = _app_handle.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+            }
             }
             _ => {}
         }
