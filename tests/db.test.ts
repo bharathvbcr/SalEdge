@@ -6,14 +6,15 @@
  * server/db.ts would capture process.env.DATABASE_PATH before we set it.
  * The module MUST be imported dynamically after the env override below.
  */
-process.env.DATABASE_PATH = '/var/folders/wl/qc_0nnp91cd5kfy179krkjxr0000gn/T/opencode/bsms-test.sqlite';
-
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import Database from 'better-sqlite3';
 
-const TMP_DB = process.env.DATABASE_PATH;
+const TMP_DB = path.join(os.tmpdir(), `saledge-dbtest-${process.pid}.sqlite`);
+process.env.DATABASE_PATH = TMP_DB;
 
 for (const suffix of ['', '-wal', '-shm']) {
     try { fs.unlinkSync(TMP_DB + suffix); } catch { /* absent */ }

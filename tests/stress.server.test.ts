@@ -11,7 +11,6 @@
  * scenario, which deliberately saturates the limiter LAST.
  */
 process.env.STRESS_PORT = String(3950 + Math.floor(Math.random() * 40));
-const TMP_ROOT = '/var/folders/wl/qc_0nnp91cd5kfy179krkjxr0000gn/T/opencode/stress';
 const PORT = process.env.STRESS_PORT;
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -19,6 +18,12 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+// Unique per-run scratch dir under the OS temp root. A hardcoded absolute
+// macOS path here made CI fail on Linux runners with EACCES.
+const TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'saledge-stress-'));
 
 let child: ReturnType<typeof spawn> | null = null;
 let adminToken = '';
@@ -49,11 +54,6 @@ async function waitForHealth(timeoutMs = 20_000): Promise<void> {
 }
 
 before(async () => {
-    for (const suffix of ['', '-wal', '-shm']) {
-        try { fs.unlinkSync(`${TMP_ROOT}/bsms.sqlite${suffix}`); } catch { /* absent */ }
-    }
-    fs.mkdirSync(TMP_ROOT, { recursive: true });
-
     // Fresh bundle is built by npm run build:server before tests.
     child = spawn(process.execPath, ['dist-server/index.mjs'], {
         cwd: process.cwd(),
@@ -87,6 +87,7 @@ after(async () => {
         child!.kill('SIGTERM');
         setTimeout(() => { try { child!.kill('SIGKILL'); } catch { /* gone */ } resolve(); }, 5000);
     });
+    try { fs.rmSync(TMP_ROOT, { recursive: true, force: true }); } catch { /* best effort */ }
 });
 
 describe('stress: auth surface', () => {
