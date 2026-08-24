@@ -16,7 +16,10 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel an in-flight release build: four platform jobs publish into
+  # the same GitHub release, and cancelling mid-upload leaves a partial,
+  # missing-assets release behind.
+  cancel-in-progress: false
 
 jobs:
   release-desktop:

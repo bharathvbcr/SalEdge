@@ -34,12 +34,55 @@ fn augmented_path() -> String {
     format!("/opt/homebrew/bin:/usr/local/bin:{existing}")
 }
 
+fn node_install_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Install it with: brew install node (or from https://nodejs.org)"
+    } else {
+        "Install Node.js 18+ from https://nodejs.org and make sure 'node' is on the system PATH"
+    }
+}
+
+/// Show a blocking error dialog on every desktop platform. Previously this
+/// used osascript only, so on Windows/Linux a failed startup exited silently
+/// and the released installer looked dead to end users.
 fn show_startup_error(message: &str) {
-    let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!(
-        r#"display dialog "{escaped}" with title "SalEdge" buttons {{"OK"}} default button "OK" with icon stop"#
-    );
-    let _ = Command::new("osascript").args(["-e", &script]).status();
+    eprintln!("[SalEdge] {message}");
+
+    #[cfg(target_os = "macos")]
+    {
+        let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            r#"display dialog "{escaped}" with title "SalEdge" buttons {{"OK"}} default button "OK" with icon stop"#
+        );
+        let _ = Command::new("osascript").args(["-e", &script]).status();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // WScript.Shell.Popup survives even before any window exists.
+        let escaped = message.replace('\'', "''");
+        let script = format!(
+            "(New-Object -ComObject WScript.Shell).Popup('{}', 0, 'SalEdge', 16) | Out-Null",
+            escaped
+        );
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+            .status();
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        for dialog in [
+            Command::new("zenity").args(["--error", "--title=SalEdge", "--text", message]),
+            Command::new("kdialog").args(["--error", message, "--title", "SalEdge"]),
+        ] {
+            if let Ok(mut child) = dialog.spawn() {
+                if child.wait().map(|s| s.success()).unwrap_or(false) {
+                    return;
+                }
+            }
+        }
+    }
 }
 
 fn app_dir(handle: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -110,7 +153,7 @@ fn ensure_node_runtime() -> Result<PathBuf, String> {
         .arg("--version")
         .env("PATH", augmented_path())
         .output()
-        .map_err(|e| format!("Node.js was not found ({e}). Install it with: brew install node"))?;
+        .map_err(|e| format!("Node.js was not found ({e}). {}", node_install_hint()))?;
     if !output.status.success() {
         return Err("Node.js exists but could not be executed.".to_string());
     }
@@ -123,8 +166,13 @@ fn ensure_node_runtime() -> Result<PathBuf, String> {
         .parse()
         .unwrap_or(0);
     if major < MIN_NODE_MAJOR {
+        let hint = if cfg!(target_os = "macos") {
+            "Upgrade with: brew upgrade node"
+        } else {
+            "Upgrade Node.js from https://nodejs.org"
+        };
         return Err(format!(
-            "SalEdge needs Node.js {MIN_NODE_MAJOR}+ but found {version}. Upgrade with: brew upgrade node"
+            "SalEdge needs Node.js {MIN_NODE_MAJOR}+ but found {version}. {hint}"
         ));
     }
     Ok(exe)
@@ -176,7 +224,9 @@ fn spawn_api_server(handle: &tauri::AppHandle, port: u16) -> Result<Child, Strin
 }
 
 fn wait_for_api_server(port: u16) -> Result<(), String> {
-    for _ in 0..60 {
+    // 120 x 500ms = 60s: first launch on Windows can spend tens of seconds in
+    // antivirus scans over the bundled node_modules before Node even binds.
+    for _ in 0..120 {
         if check_api_health(port) {
             thread::sleep(Duration::from_millis(300));
             return Ok(());
@@ -184,7 +234,8 @@ fn wait_for_api_server(port: u16) -> Result<(), String> {
         thread::sleep(Duration::from_millis(500));
     }
     Err(format!(
-        "API server did not start on port {port} within 30 seconds. Ensure Node.js is installed (brew install node)."
+        "API server did not start on port {port} within 60 seconds. {}",
+        node_install_hint()
     ))
 }
 
