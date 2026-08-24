@@ -182,27 +182,30 @@ const AuthenticatedApp: React.FC = () => {
         return <LockScreen />;
     }
 
-    // Seeded / admin-reset accounts must rotate their known password first.
-    if (user?.mustChangePassword) {
-        return <ForcePasswordChange />;
-    }
-
+    // ToastProvider must wrap EVERY authenticated branch, not just the main
+    // layout — the forced-password gate consumes useToast and previously
+    // crashed with "useToast must be used within a ToastProvider" for any
+    // returning user whose account still carried a seeded password.
     return (
         <ConfigProvider>
             <ToastProvider>
-                <StorageConflictBridge>
-                    <MasterDataProvider>
-                        <AppDataProvider>
-                            <DataLoadingGate>
-                                {hydrationFailed && <HydrationWarningBanner />}
-                                <NotificationProvider>
-                                    <SessionTimeoutWarning />
-                                    <MainLayout />
-                                </NotificationProvider>
-                            </DataLoadingGate>
-                        </AppDataProvider>
-                    </MasterDataProvider>
-                </StorageConflictBridge>
+                {user?.mustChangePassword ? (
+                    <ForcePasswordChange />
+                ) : (
+                    <StorageConflictBridge>
+                        <MasterDataProvider>
+                            <AppDataProvider>
+                                <DataLoadingGate>
+                                    {hydrationFailed && <HydrationWarningBanner />}
+                                    <NotificationProvider>
+                                        <SessionTimeoutWarning />
+                                        <MainLayout />
+                                    </NotificationProvider>
+                                </DataLoadingGate>
+                            </AppDataProvider>
+                        </MasterDataProvider>
+                    </StorageConflictBridge>
+                )}
             </ToastProvider>
         </ConfigProvider>
     );
