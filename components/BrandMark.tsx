@@ -18,7 +18,7 @@ interface BrandMarkProps {
  *
  * Source of truth is public/logo.svg; the badge and raster variants used by the
  * browser, PWA and desktop shells are derived from public/icon.svg by
- * `npm run icons:generate`.
+ * `bun run icons:generate`.
  */
 export const BrandMark: React.FC<BrandMarkProps> = ({ className = 'h-9 w-9', alt = '', glow = 'sm' }) => (
     <img

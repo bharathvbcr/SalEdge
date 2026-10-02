@@ -58,7 +58,10 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: 'npm'
+
+      # Bun installs and runs scripts; the tools and the sidecar build use Node 22.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -81,11 +84,13 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install Node Dependencies
-        run: npm ci --ignore-scripts
+        run: bun install --frozen-lockfile --ignore-scripts
 
       # --ignore-scripts skips better-sqlite3's install script, which is what
       # fetches/builds its native binding. Without this step the shipped app's
       # API server crashes on startup with "Could not locate the bindings file".
+      # npm (from setup-node) rebuilds it against Node 22 — the sidecar's ABI;
+      # it works on Bun's node_modules without a package-lock.json.
       - name: Rebuild Native Modules
         run: npm rebuild better-sqlite3
 
@@ -96,7 +101,7 @@ jobs:
         run: node scripts/fetch-node-sidecar.mjs ${{ matrix.target }}
 
       - name: Build Web Client & Server
-        run: npm run build:desktop
+        run: bun run build:desktop
 
       - name: Build Tauri Desktop & Publish Release
         uses: tauri-apps/tauri-action@v0

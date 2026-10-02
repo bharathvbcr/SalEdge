@@ -9,7 +9,7 @@
  * Rasterising is delegated to `tauri icon`, which already ships with this repo,
  * so regenerating icons needs no extra image tooling or dependency.
  *
- * Usage: npm run icons:generate
+ * Usage: bun run icons:generate
  */
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -18,7 +18,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
 /** Sizes rendered from public/icon.svg for the web/PWA surfaces. */
 const WEB_ICONS = [
@@ -35,7 +34,7 @@ const WEB_ICONS = [
 const DESKTOP_EXTRAS = ['android', 'ios', '64x64.png'];
 
 function tauriIcon(args) {
-    execFileSync(npx, ['tauri', 'icon', ...args], { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] });
+    execFileSync('bun', ['x', 'tauri', 'icon', ...args], { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] });
 }
 
 function withTempDir(fn) {

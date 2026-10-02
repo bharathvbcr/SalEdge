@@ -206,8 +206,8 @@ fn spawn_api_server(handle: &tauri::AppHandle, port: u16) -> Result<Child, Strin
     };
 
     let mut command = if cfg!(debug_assertions) {
-        let mut cmd = Command::new("npx");
-        cmd.args(["tsx", server_entry.to_str().unwrap_or("server/index.ts")]);
+        let mut cmd = Command::new("bun");
+        cmd.args(["x", "tsx", server_entry.to_str().unwrap_or("server/index.ts")]);
         cmd
     } else {
         let mut cmd = Command::new(node_exe);

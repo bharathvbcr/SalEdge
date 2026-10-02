@@ -142,7 +142,7 @@ function spawnTracked(label, cmd, args, env = process.env) {
     return child;
 }
 
-spawnTracked('api', 'npx', ['tsx', 'watch', 'server/index.ts'], apiEnv);
+spawnTracked('api', 'bun', ['x', 'tsx', 'watch', 'server/index.ts'], apiEnv);
 
 const apiPort = await waitForApiPort(existingApiPorts);
 const frontendPort = await findAvailablePort('0.0.0.0', PREFERRED_FRONTEND, new Set([apiPort]));
@@ -159,7 +159,7 @@ const clientEnv = {
 console.log(`[dev] API → http://127.0.0.1:${apiPort}`);
 console.log(`[dev] UI  → https://localhost:${frontendPort}`);
 
-spawnTracked('client', 'npx', ['vite', '--port', String(frontendPort), '--strictPort'], clientEnv);
+spawnTracked('client', 'bun', ['x', 'vite', '--port', String(frontendPort), '--strictPort'], clientEnv);
 
 function shutdown(code = 0) {
     for (const child of children) {

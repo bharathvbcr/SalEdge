@@ -283,8 +283,8 @@ Resource contention mitigation:
 
 ```bash
 # Component benchmarks (no LLM)
-npm run semantic:benchmark -- --skip-embedder
-npm run semantic:benchmark -- --component threshold
+bun run semantic:benchmark -- --skip-embedder
+bun run semantic:benchmark -- --component threshold
 
 # Full pipeline (mock inference)
 python benchmarks/semantic_benchmark.py --mock-inference
@@ -369,7 +369,7 @@ curl http://127.0.0.1:8090/metrics/snapshot
 
 ## Deployment Checklist
 
-- [ ] `npm run semantic:setup` — install Python deps
+- [ ] `bun run semantic:setup` — install Python deps
 - [ ] Pull Ollama models: `phi3:mini`, `llama3.2:3b`, `llama3.1:8b`
 - [ ] Set `SEMANTIC_EMBEDDER_DEVICE=cpu` on GPU-constrained edge nodes
 - [ ] Configure `SEMANTIC_SIMILARITY_THRESHOLD` for domain (start 0.88)

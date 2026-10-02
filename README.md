@@ -157,7 +157,7 @@ To run BSMS locally or package it for distribution, you need:
 
 1. **Install Dependencies:**
    ```bash
-   npm install
+   bun install
    ```
 
 2. **Initialize local environment variables:**
@@ -167,7 +167,7 @@ To run BSMS locally or package it for distribution, you need:
 
 3. **Start the Development Stack:**
    ```bash
-   npm run dev
+   bun run dev
    ```
    *This automatically starts the Express server, Vite dev server, and triggers python semantic layer setup.*
 
@@ -197,16 +197,16 @@ The application features a semantic layer middleware that intercepts text genera
    ollama pull llama3.2:3b
    ```
 3. Enable Ollama in **Settings ➔ AI Assistant**.
-4. The semantic layer will boot automatically with `npm run dev`. To set it up manually or run benchmarks:
+4. The semantic layer will boot automatically with `bun run dev`. To set it up manually or run benchmarks:
    ```bash
    # One-time manual setup
-   npm run semantic:setup
+   bun run semantic:setup
 
    # Start semantic layer stand-alone (default port 8090)
-   npm run semantic:serve
+   bun run semantic:serve
 
    # Run performance benchmarks
-   npm run semantic:benchmark
+   bun run semantic:benchmark
    ```
 
 ---
@@ -227,10 +227,10 @@ BSMS can run as a standalone desktop executable (macOS `.app`, Windows `.exe`, o
 
 ```bash
 # Run desktop development window
-npm run tauri:dev
+bun run tauri:dev
 
 # Compile release installer
-npm run tauri:build
+bun run tauri:build
 ```
 *Note: Compiled executables store SQLite files inside the standard system-specific App Data directory.*
 
@@ -259,7 +259,7 @@ Configure application parameters using a `.env` file in the root directory:
 ## Tests
 
 ```bash
-npm test        # node:test suite: GST math, auth/hashing, rate limiter, DB concurrency + audit triggers, e-invoice integrity
+bun run test        # node:test suite: GST math, auth/hashing, rate limiter, DB concurrency + audit triggers, e-invoice integrity
 ```
 The database tests run against an isolated temp SQLite file and never touch `data/`.
 
@@ -271,11 +271,11 @@ For standard server deployments (non-Tauri):
 
 1. **Build the production client assets:**
    ```bash
-   npm run build
+   bun run build
    ```
 2. **Launch the production node server:**
    ```bash
    # Ensure production variable states are configured in .env
-   npm start
+   bun run start
    ```
    *The server acts as both the API host and the static file provider, serving the Vite bundle from the `dist/` directory.*

@@ -1,0 +1,9 @@
+# GitHub supports bun for version updates only: no dependency graph, alerts or
+# security PRs for bun.lock. Advisories are caught by the Dependency audit
+# workflow (bun-audit.yml); these weekly PRs keep versions moving.
+version: 2
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"

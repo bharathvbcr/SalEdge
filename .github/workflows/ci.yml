@@ -19,7 +19,10 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: 'npm'
+
+      # Bun installs and runs scripts; the tools and tests still run on Node 22.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -39,22 +42,24 @@ jobs:
       - name: Download Node Sidecar
         run: node scripts/fetch-node-sidecar.mjs x86_64-unknown-linux-gnu
 
+      # Bun runs better-sqlite3's install script with the `node` on PATH
+      # (Node 22 above), so the binding matches the sidecar's ABI.
       - name: Install Node Dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Run Typecheck
-        run: npm run typecheck
+        run: bun run typecheck
 
       # Build BEFORE tests: the stress suite boots the real server from
       # dist-server/index.mjs, which does not exist on a fresh checkout.
       - name: Build Web Client
-        run: npm run build
+        run: bun run build
 
       - name: Build Server Bundle
-        run: npm run build:server
+        run: bun run build:server
 
       - name: Run Tests (unit + stress + fuzz)
-        run: npm test
+        run: bun run test
 
       - name: Cargo Check
         run: cargo check --manifest-path src-tauri/Cargo.toml

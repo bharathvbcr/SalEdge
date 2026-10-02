@@ -3,10 +3,11 @@
   "private": true,
   "version": "0.2.3",
   "type": "module",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "dev": "PORT=auto SEMANTIC_LAYER_URL=auto node scripts/dev.mjs",
-    "dev:parallel": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:full": "concurrently -n semantic,dev -c magenta,green \"npm run semantic:serve\" \"npm run dev\"",
+    "dev:parallel": "concurrently \"bun run dev:server\" \"bun run dev:client\"",
+    "dev:full": "concurrently -n semantic,dev -c magenta,green \"bun run semantic:serve\" \"bun run dev\"",
     "dev:server": "BSMS_DEV=true tsx watch server/index.ts",
     "dev:client": "vite",
     "semantic:setup": "node scripts/semantic-setup.mjs",
@@ -17,9 +18,9 @@
     "build:test": "VITE_ENABLE_TEST_LOGIN=true vite build",
     "build:server": "esbuild server/index.ts --bundle --platform=node --packages=external --format=esm --outfile=dist-server/index.mjs",
     "test": "node --import tsx --test tests/*.test.ts",
-    "build:desktop": "npm run build && npm run build:server",
+    "build:desktop": "bun run build && bun run build:server",
     "typecheck": "tsc --noEmit",
-    "ci:local": "npm run typecheck && npm run build && npm run build:server && cargo check --manifest-path src-tauri/Cargo.toml",
+    "ci:local": "bun run typecheck && bun run build && bun run build:server && cargo check --manifest-path src-tauri/Cargo.toml",
     "start": "tsx server/index.ts",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -32,7 +33,7 @@
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^12.11.1",
     "cors": "^2.8.5",
-    "express": "^4.21.2",
+    "express": "^4.22.3",
     "html2canvas": "^1.4.1",
     "html5-qrcode": "^2.3.8",
     "jsbarcode": "^3.12.3",
@@ -66,5 +67,8 @@
   },
   "optionalDependencies": {
     "@rollup/rollup-darwin-arm64": "^4.62.2"
+  },
+  "overrides": {
+    "body-parser": "~1.20.8"
   }
 }

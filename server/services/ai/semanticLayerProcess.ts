@@ -1,6 +1,6 @@
 /**
  * Auto-start and lifecycle management for the Python semantic layer.
- * Boots alongside the Express server so `npm run dev` is enough — no separate terminal.
+ * Boots alongside the Express server so `bun run dev` is enough — no separate terminal.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -175,7 +175,7 @@ function ensureVenv(): void {
         env: process.env,
     });
     if (setup.status !== 0) {
-        throw new Error('Semantic layer setup failed. Run: npm run semantic:setup');
+        throw new Error('Semantic layer setup failed. Run: bun run semantic:setup');
     }
 }
 

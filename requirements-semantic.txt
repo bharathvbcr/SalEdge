@@ -1,6 +1,6 @@
 # Semantic layer dependencies (Python 3.10–3.14)
 # One-time setup from repo root:
-#   npm run semantic:setup
+#   bun run semantic:setup
 # Manual:
 #   python3 -m venv .venv-semantic && source .venv-semantic/bin/activate
 #   pip install -r requirements-semantic.txt

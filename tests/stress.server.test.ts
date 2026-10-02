@@ -63,10 +63,10 @@ async function waitForHealth(timeoutMs = 20_000): Promise<void> {
 }
 
 before(async () => {
-    // Fresh bundle is built by npm run build:server before tests. Fail fast
+    // Fresh bundle is built by bun run build:server before tests. Fail fast
     // with the real cause instead of a 20s timeout when it is missing.
     if (!fs.existsSync('dist-server/index.mjs')) {
-        throw new Error('dist-server/index.mjs not found — run `npm run build:server` before tests');
+        throw new Error('dist-server/index.mjs not found — run `bun run build:server` before tests');
     }
     const logFd = fs.openSync(SERVER_LOG, 'a');
     serverLogFd = logFd;

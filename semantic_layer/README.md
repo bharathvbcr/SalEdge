@@ -20,7 +20,7 @@ Targets **<15 ms p95** semantic-layer overhead on consumer hardware (excluding L
 From the repository root:
 
 ```bash
-npm run semantic:setup
+bun run semantic:setup
 ```
 
 This creates `.venv-semantic/` and installs `requirements-semantic.txt`. Manual equivalent:
@@ -58,9 +58,9 @@ export SEMANTIC_HF_MODEL_ID=meta-llama/Llama-3.2-3B-Instruct
 ### 3. Run the semantic layer API
 
 ```bash
-npm run semantic:serve
+bun run semantic:serve
 # or with the full dev stack:
-npm run dev:full
+bun run dev:full
 ```
 
 Default URL: http://127.0.0.1:8090
@@ -78,8 +78,8 @@ curl -X POST http://127.0.0.1:8090/v1/query \
 Component benchmarks (no LLM required):
 
 ```bash
-npm run semantic:benchmark -- --skip-embedder
-npm run semantic:benchmark -- --component cache
+bun run semantic:benchmark -- --skip-embedder
+bun run semantic:benchmark -- --component cache
 ```
 
 Full pipeline benchmark (orchestrator + optional mock inference):
@@ -146,13 +146,13 @@ semantic_layer/
 
 ## Integration with Battery Shop App
 
-When **Ollama** is selected as the AI provider, the semantic layer starts **automatically** with the Express API server (`npm run dev`). No separate terminal or manual setup after the first run.
+When **Ollama** is selected as the AI provider, the semantic layer starts **automatically** with the Express API server (`bun run dev`). No separate terminal or manual setup after the first run.
 
 **First run only:** the server creates `.venv-semantic/` and installs Python deps (~1–2 min). After that, startup is fast.
 
 **Wiring:**
-- `npm run dev` — API + Vite + semantic layer (auto-started)
-- `npm run semantic:setup` — manual one-time setup (optional; auto-runs on first start)
+- `bun run dev` — API + Vite + semantic layer (auto-started)
+- `bun run semantic:setup` — manual one-time setup (optional; auto-runs on first start)
 - Server: `server/services/ai/semanticLayerProcess.ts` (lifecycle)
 - Client: `server/services/ai/semanticLayerClient.ts` (queries + fallback)
 - RAG chunks: `server/services/ai/ragChunks.ts`

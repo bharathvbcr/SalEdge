@@ -3,12 +3,12 @@
  *
  * SECURITY: everything here is gated behind `TEST_LOGIN_ENABLED`, which is the
  * compile-time constant `__TEST_LOGIN__` injected by Vite `define`:
- *   - true during `vite dev` and `npm run build:test`, and
- *   - false in a plain production `npm run build`.
+ *   - true during `vite dev` and `bun run build:test`, and
+ *   - false in a plain production `bun run build`.
  * When false, every guard folds to `if (false)`, so esbuild dead-code-eliminates
  * the call sites and tree-shakes this ENTIRE module — seeded credentials, the
  * quick-fill buttons, and the auto-login bypass — out of the production bundle.
- * Enable it for a build only via `npm run build:test` (never `npm run build`).
+ * Enable it for a build only via `bun run build:test` (never `bun run build`).
  */
 
 export interface TestAccount {

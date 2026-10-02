@@ -33,4 +33,4 @@ if (!existsSync(pythonBin)) {
 console.log('Installing semantic layer dependencies...');
 run(pipBin, ['install', '-r', 'requirements-semantic.txt']);
 
-console.log('\nSemantic layer ready. It also starts automatically with npm run dev.');
+console.log('\nSemantic layer ready. It also starts automatically with bun run dev.');
