@@ -7,10 +7,22 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# This job checks out and compiles. It does not push or publish.
+# contents: read is the minimum for checkout. Cache writes are best-effort:
+# rust-cache logs a save failure and still exits 0, so a cache miss cannot
+# turn a failed compile into a success.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Typecheck, Test, Build & Cargo Check
     runs-on: ubuntu-22.04 # matches release.yml; 24.04 dropped libappindicator3-dev
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -20,7 +32,8 @@ jobs:
         with:
           node-version: 22
 
-      # Bun installs and runs scripts; the tools and tests still run on Node 22.
+      # Bun version comes from package.json "packageManager" (setup-bun@v2).
+      # The tools and tests still run on Node 22, matching the sidecar ABI.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
@@ -47,19 +60,7 @@ jobs:
       - name: Install Node Dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run Typecheck
-        run: bun run typecheck
-
-      # Build BEFORE tests: the stress suite boots the real server from
-      # dist-server/index.mjs, which does not exist on a fresh checkout.
-      - name: Build Web Client
-        run: bun run build
-
-      - name: Build Server Bundle
-        run: bun run build:server
-
-      - name: Run Tests (unit + stress + fuzz)
-        run: bun run test
-
-      - name: Cargo Check
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+      # One project script: typecheck, client build, server bundle, tests, cargo check.
+      # Tests boot dist-server/index.mjs, so the script builds before it tests.
+      - name: Typecheck, build, test, and cargo check
+        run: bun run ci:local

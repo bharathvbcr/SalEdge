@@ -21,6 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
-      # Reads bun.lock directly (no install needed) and exits 1 on any advisory.
+      # package.json "audit" reads bun.lock (no install) and exits 1 on any advisory.
       - name: bun audit
-        run: bun audit
+        run: bun run audit
